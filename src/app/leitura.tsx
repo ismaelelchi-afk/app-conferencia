@@ -119,6 +119,11 @@ export default function LeituraScreen() {
   const ultimoCodigoLido =
     useRef<string | null>(null);
 
+  // Confirmação de leitura: exige 2 detecções consecutivas do mesmo
+  // código antes de processar. Filtra misreads de movimento rápido.
+  const codigoPendente =
+    useRef<{ data: string; contagem: number } | null>(null);
+
   const azulTimer =
     useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -256,9 +261,9 @@ export default function LeituraScreen() {
       return;
     }
 
-    if (
-      ultimoCodigoLido.current === codigoBarras
-    ) {
+    if (ultimoCodigoLido.current === codigoBarras) {
+      // Código ainda bloqueado — descarta pendente para não acumular leitura antiga.
+      codigoPendente.current = null;
       return;
     }
 
@@ -373,10 +378,9 @@ export default function LeituraScreen() {
   }
 
   function handleBarcodeScanned({ data }: { data: string }) {
-    if (!data) {
-      return;
-    }
+    if (!data) return;
 
+    // Modo manual: aceita na primeira leitura (usuário já confirmou).
     if (modoLeitura === 'manual') {
       setEscutandoManual(false);
 
@@ -384,9 +388,27 @@ export default function LeituraScreen() {
         clearTimeout(leituraManualTimer.current);
         leituraManualTimer.current = null;
       }
+
+      codigoPendente.current = null;
+      void registrarLeitura(data);
+      return;
     }
 
-    void registrarLeitura(data);
+    // Modo automático: exige 2 leituras consecutivas do mesmo código.
+    const pendente = codigoPendente.current;
+
+    if (pendente && pendente.data === data) {
+      const novaContagem = pendente.contagem + 1;
+
+      if (novaContagem >= 2) {
+        codigoPendente.current = null;
+        void registrarLeitura(data);
+      } else {
+        codigoPendente.current = { data, contagem: novaContagem };
+      }
+    } else {
+      codigoPendente.current = { data, contagem: 1 };
+    }
   }
 
   function handlePressionarLer() {
