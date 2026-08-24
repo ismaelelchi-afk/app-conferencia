@@ -1,8 +1,3 @@
-// ============================================================
-// RESULTADO — RAMSONS CONFERÊNCIA
-// Parte 1/2 — Estado, carga de dados, lógica de edição
-// ============================================================
-
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -17,50 +12,27 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  atualizarStatusLeitura,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
   finalizarConferencia,
+  marcarStatusRevisao,
   obterConferencia,
   obterLeiturasConferencia,
   obterResumoConferencia,
+  obterResumoRevisao,
   removerLeituraConferencia,
-  atualizarStatusLeitura,
 } from '@/database/database';
 import type {
   Conferencia,
   DadosProdutoRapido,
   LeituraConferencia,
   ResumoConferencia,
+  ResumoRevisao,
   StatusLeitura,
+  StatusRevisao,
 } from '@/models/produto';
-
-// ============================================================
-// CORES POR STATUS DE LEITURA
-// ============================================================
-
-const CORES_STATUS: Record<
-  StatusLeitura,
-  { fundo: string; borda: string; texto: string; etiqueta: string }
-> = {
-  normal: {
-    fundo: '#EAF4FF',
-    borda: '#208AEF',
-    texto: '#175CD3',
-    etiqueta: 'OK',
-  },
-  novo: {
-    fundo: '#FFFBEA',
-    borda: '#F2C94C',
-    texto: '#9A7B00',
-    etiqueta: 'NOVO',
-  },
-  desconhecido: {
-    fundo: '#FFF1F0',
-    borda: '#F04438',
-    texto: '#B42318',
-    etiqueta: 'DESCONHECIDO',
-  },
-};
+import { CORES_STATUS } from '@/constants/cores';
 
 // ============================================================
 // TELA DE RESULTADO / REVISÃO DA CONFERÊNCIA
@@ -74,25 +46,22 @@ export default function ResultadoScreen() {
   const conferenciaValida =
     Boolean(conferenciaIdParam) && !Number.isNaN(conferenciaId);
 
-  const [conferencia, setConferencia] =
-    useState<Conferencia | null>(null);
-
-  const [leituras, setLeituras] =
-    useState<LeituraConferencia[]>([]);
-
-  const [resumo, setResumo] =
-    useState<ResumoConferencia | null>(null);
+  const [conferencia, setConferencia] = useState<Conferencia | null>(null);
+  const [leituras, setLeituras] = useState<LeituraConferencia[]>([]);
+  const [resumo, setResumo] = useState<ResumoConferencia | null>(null);
+  const [resumoRevisao, setResumoRevisao] = useState<ResumoRevisao | null>(
+    null,
+  );
 
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [finalizando, setFinalizando] = useState(false);
+  const [mostrarConfirmacaoFinalizar, setMostrarConfirmacaoFinalizar] =
+    useState(false);
 
   const [itemEditando, setItemEditando] =
     useState<LeituraConferencia | null>(null);
 
-  // Modo revisão: a conferência ainda está em andamento,
-  // então pode ser editada. Se já estiver finalizada
-  // (aberta a partir do Histórico), é somente leitura.
   const modoRevisao = conferencia?.status === 'em_andamento';
 
   // ==========================================================
@@ -107,11 +76,12 @@ export default function ResultadoScreen() {
     }
 
     try {
-      const [dadosConferencia, listaLeituras, resumoConferencia] =
+      const [dadosConferencia, listaLeituras, resumoConferencia, resumoRev] =
         await Promise.all([
           obterConferencia(conferenciaId),
           obterLeiturasConferencia(conferenciaId),
           obterResumoConferencia(conferenciaId),
+          obterResumoRevisao(conferenciaId),
         ]);
 
       if (!dadosConferencia) {
@@ -123,6 +93,7 @@ export default function ResultadoScreen() {
       setConferencia(dadosConferencia);
       setLeituras(listaLeituras);
       setResumo(resumoConferencia);
+      setResumoRevisao(resumoRev);
       setCarregando(false);
     } catch (error) {
       console.error('Erro ao carregar resultado da conferência:', error);
@@ -150,16 +121,61 @@ export default function ResultadoScreen() {
   }, [conferenciaId, conferenciaValida]);
 
   // ==========================================================
-  // RECARREGAR RESUMO (após edições)
+  // RECARREGAR RESUMOS
   // ==========================================================
 
-  async function recarregarResumo() {
+  async function recarregarResumos() {
     if (!conferenciaValida) {
       return;
     }
 
-    const novoResumo = await obterResumoConferencia(conferenciaId);
+    const [novoResumo, novoResumoRevisao] = await Promise.all([
+      obterResumoConferencia(conferenciaId),
+      obterResumoRevisao(conferenciaId),
+    ]);
+
     setResumo(novoResumo);
+    setResumoRevisao(novoResumoRevisao);
+  }
+
+  // ==========================================================
+  // REVISÃO — MARCAR STATUS DE UM ITEM
+  // ==========================================================
+
+  async function alterarRevisao(
+    item: LeituraConferencia,
+    novoStatus: StatusRevisao,
+  ) {
+    if (!conferenciaValida) {
+      return;
+    }
+
+    // Tocar no status já ativo desmarca (volta a pendente).
+    const statusFinal =
+      item.statusRevisao === novoStatus && novoStatus !== 'pendente'
+        ? 'pendente'
+        : novoStatus;
+
+    try {
+      await marcarStatusRevisao(
+        conferenciaId,
+        item.produto.codigoInterno,
+        statusFinal,
+      );
+
+      setLeituras((lista) =>
+        lista.map((l) =>
+          l.produto.codigoInterno === item.produto.codigoInterno
+            ? { ...l, statusRevisao: statusFinal }
+            : l,
+        ),
+      );
+
+      const novoResumoRevisao = await obterResumoRevisao(conferenciaId);
+      setResumoRevisao(novoResumoRevisao);
+    } catch (error) {
+      console.error('Erro ao marcar status de revisão:', error);
+    }
   }
 
   // ==========================================================
@@ -206,17 +222,34 @@ export default function ResultadoScreen() {
           quantidadeValida,
         );
 
+        // Editar quantidade de um item marcado OK reverte para pendente.
+        const statusRevisaoAtual = itemEditando.statusRevisao;
+        let novoStatusRevisao = statusRevisaoAtual;
+
+        if (statusRevisaoAtual === 'ok') {
+          await marcarStatusRevisao(
+            conferenciaId,
+            itemEditando.produto.codigoInterno,
+            'pendente',
+          );
+          novoStatusRevisao = 'pendente';
+        }
+
         setLeituras((lista) =>
           lista.map((item) =>
             item.produto.codigoInterno ===
             itemEditando.produto.codigoInterno
-              ? { ...item, quantidade: quantidadeValida }
+              ? {
+                  ...item,
+                  quantidade: quantidadeValida,
+                  statusRevisao: novoStatusRevisao,
+                }
               : item,
           ),
         );
       }
 
-      await recarregarResumo();
+      await recarregarResumos();
       fecharEdicao();
     } catch (error) {
       console.error('Erro ao editar quantidade:', error);
@@ -242,7 +275,7 @@ export default function ResultadoScreen() {
         ),
       );
 
-      await recarregarResumo();
+      await recarregarResumos();
       fecharEdicao();
     } catch (error) {
       console.error('Erro ao remover item:', error);
@@ -272,7 +305,7 @@ export default function ResultadoScreen() {
           itemEditando.produto.codigoInterno
             ? {
                 ...item,
-                status: 'novo',
+                status: 'novo' as StatusLeitura,
                 produto: {
                   ...item.produto,
                   nome: dados.nome,
@@ -292,7 +325,7 @@ export default function ResultadoScreen() {
   }
 
   // ==========================================================
-  // CONFIRMAR FINALIZAÇÃO DE VERDADE
+  // CONFIRMAR FINALIZAÇÃO
   // ==========================================================
 
   async function confirmarFinalizacao() {
@@ -301,6 +334,7 @@ export default function ResultadoScreen() {
     }
 
     setFinalizando(true);
+    setMostrarConfirmacaoFinalizar(false);
 
     try {
       await finalizarConferencia(conferenciaId);
@@ -315,10 +349,6 @@ export default function ResultadoScreen() {
     (total, item) => total + item.quantidade,
     0,
   );
-
-// ============================================================
-  // PARTE 2/2 — Interface, modal de edição e estilos
-  // ============================================================
 
   // ==========================================================
   // CARREGANDO
@@ -353,9 +383,7 @@ export default function ResultadoScreen() {
             style={styles.backButtonError}
             onPress={() => router.replace('/')}
           >
-            <Text style={styles.backButtonErrorText}>
-              VOLTAR AO INÍCIO
-            </Text>
+            <Text style={styles.backButtonErrorText}>VOLTAR AO INÍCIO</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -401,7 +429,7 @@ export default function ResultadoScreen() {
           contentContainerStyle={styles.scrollContent}
         >
 
-          {/* Resumo */}
+          {/* Resumo de contagens */}
           <View style={styles.summaryCard}>
             <View style={styles.successIcon}>
               <Text style={styles.successIconText}>
@@ -423,24 +451,20 @@ export default function ResultadoScreen() {
 
             <Text style={styles.summaryDescription}>
               {modoRevisao
-                ? 'Toque em um produto para corrigir a quantidade.'
+                ? 'Marque cada produto e corrija quantidades se necessário.'
                 : 'A leitura dos produtos foi concluída.'}
             </Text>
 
             <View style={styles.summaryNumbers}>
               <View style={styles.numberItem}>
-                <Text style={styles.numberValue}>
-                  {resumo.produtosLidos}
-                </Text>
+                <Text style={styles.numberValue}>{resumo.produtosLidos}</Text>
                 <Text style={styles.numberLabel}>Produtos</Text>
               </View>
 
               <View style={styles.numberDivider} />
 
               <View style={styles.numberItem}>
-                <Text style={styles.numberValue}>
-                  {totalUnidades}
-                </Text>
+                <Text style={styles.numberValue}>{totalUnidades}</Text>
                 <Text style={styles.numberLabel}>Itens</Text>
               </View>
 
@@ -461,26 +485,54 @@ export default function ResultadoScreen() {
             </View>
           </View>
 
-          {/* Orientação */}
+          {/* Barra de progresso de revisão (somente modo revisão) */}
+          {modoRevisao && resumoRevisao && (
+            <View style={styles.revisaoBar}>
+              <View style={styles.revisaoItem}>
+                <Text style={styles.revisaoNumOk}>{resumoRevisao.ok}</Text>
+                <Text style={styles.revisaoLabelOk}>OK</Text>
+              </View>
+
+              <View style={styles.revisaoSeparator} />
+
+              <View style={styles.revisaoItem}>
+                <Text style={styles.revisaoNumDiv}>
+                  {resumoRevisao.divergencia}
+                </Text>
+                <Text style={styles.revisaoLabelDiv}>Divergência</Text>
+              </View>
+
+              <View style={styles.revisaoSeparator} />
+
+              <View style={styles.revisaoItem}>
+                <Text style={styles.revisaoNumPend}>
+                  {resumoRevisao.pendente}
+                </Text>
+                <Text style={styles.revisaoLabelPend}>Pendente</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Instrução */}
           <View style={styles.instructionCard}>
             <Text style={styles.instructionIcon}>📄</Text>
 
             <View style={styles.instructionInfo}>
               <Text style={styles.instructionTitle}>
                 {modoRevisao
-                  ? 'Confira antes de confirmar'
+                  ? 'Compare com a nota fiscal'
                   : 'Agora confira com a nota fiscal'}
               </Text>
 
               <Text style={styles.instructionText}>
                 {modoRevisao
-                  ? 'Corrija quantidades ou remova itens lidos por engano. Depois de confirmar, não será possível editar.'
+                  ? 'Marque OK, Divergência ou deixe Pendente. Toque no produto para editar a quantidade.'
                   : 'Compare os produtos lidos com a nota fiscal e registre qualquer divergência.'}
               </Text>
             </View>
           </View>
 
-          {/* Produtos */}
+          {/* Lista de produtos */}
           <Text style={styles.sectionTitle}>PRODUTOS CONFERIDOS</Text>
 
           {leituras.length === 0 ? (
@@ -494,53 +546,129 @@ export default function ResultadoScreen() {
               const cor = CORES_STATUS[item.status];
 
               return (
-                <Pressable
+                <View
                   key={item.produto.codigoInterno}
                   style={[
                     styles.productCard,
                     { borderColor: cor.borda, backgroundColor: cor.fundo },
                   ]}
-                  onPress={() => abrirEdicao(item)}
-                  disabled={!modoRevisao}
                 >
-                  <View
-                    style={[
-                      styles.productCodeBox,
-                      { backgroundColor: cor.borda },
-                    ]}
+                  {/* Área clicável para editar quantidade */}
+                  <Pressable
+                    style={styles.productMain}
+                    onPress={() => abrirEdicao(item)}
+                    disabled={!modoRevisao}
                   >
-                    <Text style={styles.productCode}>
-                      {item.produto.codigoInterno}
-                    </Text>
-                  </View>
-
-                  <View style={styles.productInfo}>
-                    <Text style={styles.productName}>
-                      {item.produto.nome}
-                    </Text>
-
-                    <View style={styles.productMetaRow}>
-                      <Text style={styles.productQuantity}>
-                        Quantidade lida: {item.quantidade}
+                    <View
+                      style={[
+                        styles.productCodeBox,
+                        { backgroundColor: cor.borda },
+                      ]}
+                    >
+                      <Text style={styles.productCode}>
+                        {item.produto.codigoInterno}
                       </Text>
-
-                      <View
-                        style={[
-                          styles.badgeSmall,
-                          { backgroundColor: cor.borda },
-                        ]}
-                      >
-                        <Text style={styles.badgeSmallText}>
-                          {cor.etiqueta}
-                        </Text>
-                      </View>
                     </View>
 
-                    {modoRevisao && (
-                      <Text style={styles.editHint}>toque para editar</Text>
-                    )}
-                  </View>
-                </Pressable>
+                    <View style={styles.productInfo}>
+                      <Text style={styles.productName}>
+                        {item.produto.nome}
+                      </Text>
+
+                      <View style={styles.productMetaRow}>
+                        <Text style={styles.productQuantity}>
+                          Qtd: {item.quantidade}
+                        </Text>
+
+                        <View
+                          style={[
+                            styles.badgeSmall,
+                            { backgroundColor: cor.borda },
+                          ]}
+                        >
+                          <Text style={styles.badgeSmallText}>
+                            {cor.etiqueta}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {modoRevisao && (
+                        <Text style={styles.editHint}>
+                          toque para editar quantidade
+                        </Text>
+                      )}
+                    </View>
+                  </Pressable>
+
+                  {/* Botões de revisão */}
+                  {modoRevisao && (
+                    <View style={styles.revisaoBotoes}>
+                      <Pressable
+                        style={[
+                          styles.btnRevisao,
+                          styles.btnOk,
+                          item.statusRevisao === 'ok' &&
+                            styles.btnOkAtivo,
+                        ]}
+                        onPress={() => void alterarRevisao(item, 'ok')}
+                      >
+                        <Text
+                          style={[
+                            styles.btnRevisaoTexto,
+                            item.statusRevisao === 'ok' &&
+                              styles.btnOkTextoAtivo,
+                          ]}
+                        >
+                          ✓ OK
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[
+                          styles.btnRevisao,
+                          styles.btnDiv,
+                          item.statusRevisao === 'divergencia' &&
+                            styles.btnDivAtivo,
+                        ]}
+                        onPress={() =>
+                          void alterarRevisao(item, 'divergencia')
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.btnRevisaoTexto,
+                            item.statusRevisao === 'divergencia' &&
+                              styles.btnDivTextoAtivo,
+                          ]}
+                        >
+                          ✗ Div.
+                        </Text>
+                      </Pressable>
+
+                      <Pressable
+                        style={[
+                          styles.btnRevisao,
+                          styles.btnPend,
+                          item.statusRevisao === 'pendente' &&
+                            styles.btnPendAtivo,
+                        ]}
+                        onPress={() =>
+                          void alterarRevisao(item, 'pendente')
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.btnRevisaoTexto,
+                            item.statusRevisao === 'pendente' &&
+                              styles.btnPendTextoAtivo,
+                          ]}
+                        >
+                          — Pend.
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
               );
             })
           )}
@@ -555,9 +683,7 @@ export default function ResultadoScreen() {
                 styles.confirmButton,
                 finalizando && styles.buttonDisabled,
               ]}
-              onPress={() => {
-                void confirmarFinalizacao();
-              }}
+              onPress={() => setMostrarConfirmacaoFinalizar(true)}
               disabled={finalizando}
             >
               {finalizando ? (
@@ -591,7 +717,7 @@ export default function ResultadoScreen() {
 
       </View>
 
-      {/* Modal de edição */}
+      {/* Modal de edição de item */}
       {itemEditando && (
         <ModalEdicaoItem
           item={itemEditando}
@@ -600,6 +726,81 @@ export default function ResultadoScreen() {
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
         />
+      )}
+
+      {/* Modal de confirmação de finalização */}
+      {mostrarConfirmacaoFinalizar && resumoRevisao && (
+        <View style={styles.overlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmCardIcon}>📋</Text>
+
+            <Text style={styles.confirmCardTitle}>
+              FINALIZAR CONFERÊNCIA?
+            </Text>
+
+            <Text style={styles.confirmCardSubtitle}>
+              Resumo da revisão:
+            </Text>
+
+            <View style={styles.confirmResumoRow}>
+              <View style={[styles.confirmResumoItem, styles.confirmResumoOk]}>
+                <Text style={styles.confirmResumoNum}>
+                  {resumoRevisao.ok}
+                </Text>
+                <Text style={styles.confirmResumoLabel}>OK</Text>
+              </View>
+
+              <View
+                style={[styles.confirmResumoItem, styles.confirmResumoDiv]}
+              >
+                <Text style={styles.confirmResumoNum}>
+                  {resumoRevisao.divergencia}
+                </Text>
+                <Text style={styles.confirmResumoLabel}>Divergência</Text>
+              </View>
+
+              <View
+                style={[styles.confirmResumoItem, styles.confirmResumoPend]}
+              >
+                <Text style={styles.confirmResumoNum}>
+                  {resumoRevisao.pendente}
+                </Text>
+                <Text style={styles.confirmResumoLabel}>Pendente</Text>
+              </View>
+            </View>
+
+            {resumoRevisao.pendente > 0 && (
+              <Text style={styles.confirmAviso}>
+                ⚠️ Ainda há {resumoRevisao.pendente} produto(s) pendente(s)
+                de revisão. Você pode finalizar mesmo assim.
+              </Text>
+            )}
+
+            <Pressable
+              style={styles.confirmFinalButton}
+              onPress={() => void confirmarFinalizacao()}
+              disabled={finalizando}
+            >
+              {finalizando ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.confirmFinalButtonText}>
+                  SIM, FINALIZAR
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={styles.confirmCancelButton}
+              onPress={() => setMostrarConfirmacaoFinalizar(false)}
+              disabled={finalizando}
+            >
+              <Text style={styles.confirmCancelButtonText}>
+                VOLTAR À REVISÃO
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -647,13 +848,10 @@ function ModalEdicaoItem({
 
           {ehDesconhecido ? (
             <>
-              <Text style={styles.editTitle}>
-                PRODUTO NÃO IDENTIFICADO
-              </Text>
+              <Text style={styles.editTitle}>PRODUTO NÃO IDENTIFICADO</Text>
 
               <Text style={styles.editSubtitle}>
-                Preencha o nome para salvar este
-                código como um produto novo.
+                Preencha o nome para salvar este código como um produto novo.
               </Text>
 
               <Text style={styles.editLabel}>NOME *</Text>
@@ -718,13 +916,9 @@ function ModalEdicaoItem({
 
           <Pressable
             style={styles.editSaveButton}
-            onPress={() =>
-              onSalvarQuantidade(Number(quantidadeTexto) || 0)
-            }
+            onPress={() => onSalvarQuantidade(Number(quantidadeTexto) || 0)}
           >
-            <Text style={styles.editSaveButtonText}>
-              SALVAR QUANTIDADE
-            </Text>
+            <Text style={styles.editSaveButtonText}>SALVAR QUANTIDADE</Text>
           </Pressable>
 
           <Pressable style={styles.editRemoveButton} onPress={onRemover}>
@@ -801,7 +995,6 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
 
-  // Cabeçalho
   header: {
     height: 58,
     flexDirection: 'row',
@@ -844,7 +1037,6 @@ const styles = StyleSheet.create({
     width: 44,
   },
 
-  // Resumo
   summaryCard: {
     marginTop: 12,
     padding: 20,
@@ -918,9 +1110,66 @@ const styles = StyleSheet.create({
     backgroundColor: '#E4E7EC',
   },
 
-  // Instrução
+  // Barra de progresso de revisão
+  revisaoBar: {
+    marginTop: 12,
+    flexDirection: 'row',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E4E7EC',
+    overflow: 'hidden',
+  },
+
+  revisaoItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+
+  revisaoSeparator: {
+    width: 1,
+    backgroundColor: '#E4E7EC',
+  },
+
+  revisaoNumOk: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#12B76A',
+  },
+
+  revisaoLabelOk: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#12B76A',
+  },
+
+  revisaoNumDiv: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#F04438',
+  },
+
+  revisaoLabelDiv: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F04438',
+  },
+
+  revisaoNumPend: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#98A2B3',
+  },
+
+  revisaoLabelPend: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#98A2B3',
+  },
+
   instructionCard: {
-    marginTop: 14,
+    marginTop: 12,
     padding: 16,
     borderRadius: 16,
     backgroundColor: '#EFF8FF',
@@ -949,7 +1198,6 @@ const styles = StyleSheet.create({
     color: '#344054',
   },
 
-  // Produtos
   sectionTitle: {
     marginTop: 20,
     marginBottom: 8,
@@ -971,11 +1219,14 @@ const styles = StyleSheet.create({
   },
 
   productCard: {
-    minHeight: 66,
-    marginBottom: 8,
-    padding: 12,
+    marginBottom: 10,
     borderRadius: 14,
     borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+
+  productMain: {
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -1035,7 +1286,63 @@ const styles = StyleSheet.create({
     color: '#98A2B3',
   },
 
-  // Confirmação
+  // Botões de revisão
+  revisaoBotoes: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.06)',
+  },
+
+  btnRevisao: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnOk: {
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(0,0,0,0.06)',
+  },
+
+  btnOkAtivo: {
+    backgroundColor: '#12B76A',
+  },
+
+  btnDiv: {
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(0,0,0,0.06)',
+  },
+
+  btnDivAtivo: {
+    backgroundColor: '#F04438',
+  },
+
+  btnPend: {},
+
+  btnPendAtivo: {
+    backgroundColor: '#98A2B3',
+  },
+
+  btnRevisaoTexto: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#667085',
+  },
+
+  btnOkTextoAtivo: {
+    color: '#FFFFFF',
+  },
+
+  btnDivTextoAtivo: {
+    color: '#FFFFFF',
+  },
+
+  btnPendTextoAtivo: {
+    color: '#FFFFFF',
+  },
+
+  // Ações
   confirmButton: {
     height: 58,
     marginTop: 14,
@@ -1062,7 +1369,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // Continuar / voltar
   newButton: {
     height: 54,
     marginTop: 10,
@@ -1080,7 +1386,6 @@ const styles = StyleSheet.create({
     color: '#344054',
   },
 
-  // Modal de edição (mesmo estilo de leitura.tsx)
   overlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -1089,6 +1394,116 @@ const styles = StyleSheet.create({
     padding: 24,
   },
 
+  // Modal de confirmação de finalização
+  confirmCard: {
+    width: '100%',
+    maxWidth: 420,
+    padding: 24,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+  },
+
+  confirmCardIcon: {
+    fontSize: 34,
+    marginBottom: 8,
+  },
+
+  confirmCardTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#18212F',
+    textAlign: 'center',
+  },
+
+  confirmCardSubtitle: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#667085',
+  },
+
+  confirmResumoRow: {
+    marginTop: 12,
+    width: '100%',
+    flexDirection: 'row',
+    gap: 8,
+  },
+
+  confirmResumoItem: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+
+  confirmResumoOk: {
+    backgroundColor: '#ECFDF3',
+  },
+
+  confirmResumoDiv: {
+    backgroundColor: '#FFF1F0',
+  },
+
+  confirmResumoPend: {
+    backgroundColor: '#F2F4F7',
+  },
+
+  confirmResumoNum: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#18212F',
+  },
+
+  confirmResumoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#667085',
+    marginTop: 2,
+  },
+
+  confirmAviso: {
+    marginTop: 14,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#B54708',
+    textAlign: 'center',
+    backgroundColor: '#FFFAEB',
+    padding: 10,
+    borderRadius: 10,
+    width: '100%',
+  },
+
+  confirmFinalButton: {
+    width: '100%',
+    minHeight: 52,
+    marginTop: 18,
+    borderRadius: 13,
+    backgroundColor: '#12B76A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  confirmFinalButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  confirmCancelButton: {
+    width: '100%',
+    minHeight: 48,
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  confirmCancelButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#667085',
+  },
+
+  // Modal de edição de item
   editCard: {
     width: '100%',
     maxWidth: 420,
@@ -1180,7 +1595,7 @@ const styles = StyleSheet.create({
     color: '#F04438',
   },
 
- editCancelButton: {
+  editCancelButton: {
     height: 46,
     marginTop: 10,
     alignItems: 'center',
@@ -1193,4 +1608,3 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 });
-

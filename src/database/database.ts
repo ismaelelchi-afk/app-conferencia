@@ -12,8 +12,10 @@ import type {
   Produto,
   ProdutoImportacao,
   ResumoConferencia,
+  ResumoRevisao,
   StatusConferencia,
   StatusLeitura,
+  StatusRevisao,
 } from '@/models/produto';
 
 import produtosRamsons from '@/assets/data/produtos-ramsons.json';
@@ -42,7 +44,7 @@ async function obterDatabase(): Promise<SQLite.SQLiteDatabase> {
 // FORMATAR NÚMERO DE CONFERENCIA
 // ============================================================
 
-function formatarNumeroConferencia(id: number): string {
+export function formatarNumeroConferencia(id: number): string {
   return `#${String(id).padStart(6, '0')}`;
 }
 
@@ -135,6 +137,16 @@ export async function inicializarDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_leituras_conferencia_id
     ON leituras_conferencia(conferencia_id);
   `);
+
+  // Migração: adiciona status_revisao se ainda não existir.
+  try {
+    await db.execAsync(`
+      ALTER TABLE leituras_conferencia
+      ADD COLUMN status_revisao TEXT NOT NULL DEFAULT 'pendente';
+    `);
+  } catch {
+    // Coluna já existe — ignorar.
+  }
 
   // ----------------------------------------------------------
   // CONFIGURAÇÕES (chave/valor)
@@ -482,49 +494,6 @@ export async function contarProdutosPorOrigem(): Promise<{
 }
 
 // ============================================================
-// INSERTAR PRODUCTOS DE PRUEBA
-// Conservada para pruebas locais manuais.
-// NO se ejecuta automáticamente al iniciar la app.
-// ============================================================
-
-export async function inserirProdutosTeste(): Promise<void> {
-  const total = await contarProdutos();
-
-  if (total > 0) {
-    return;
-  }
-
-  const produtosTeste: Produto[] = [
-    {
-      codigoInterno: 'RAM-000001',
-      codigoBarras: '7891234567890',
-      nome: 'Produto de teste A',
-      marca: 'RAMSONS',
-      categoria: 'Teste',
-      unidade: 'UN',
-      estoque: 10,
-      ativo: true,
-      origem: 'catalogo',
-    },
-    {
-      codigoInterno: 'RAM-000002',
-      codigoBarras: '7891234567891',
-      nome: 'Produto de teste B',
-      marca: 'RAMSONS',
-      categoria: 'Teste',
-      unidade: 'UN',
-      estoque: 20,
-      ativo: true,
-      origem: 'catalogo',
-    },
-  ];
-
-  for (const produto of produtosTeste) {
-    await adicionarProduto(produto);
-  }
-}
-
-// ============================================================
 // IMPORTAR CATÁLOGO REAL RAMSONS (primeira vez)
 // Se ejecuta solamente si la base está vacía.
 // ============================================================
@@ -643,6 +612,7 @@ export async function reimportarCatalogoEmbutido(): Promise<number> {
 // ============================================================
 
 export type DadosProdutoManual = {
+  codigoInterno?: string;
   codigoBarras?: string | null;
   nome: string;
   marca?: string;
@@ -650,12 +620,13 @@ export type DadosProdutoManual = {
   modelo?: string;
   unidade?: string;
   estoque?: number;
+  url?: string;
 };
 
 export async function criarProdutoManual(
   dados: DadosProdutoManual,
 ): Promise<Produto> {
-  const codigoInterno = gerarCodigoInternoManual();
+  const codigoInterno = dados.codigoInterno?.trim() || gerarCodigoInternoManual();
 
   const produto: Produto = {
     codigoInterno,
@@ -667,6 +638,7 @@ export async function criarProdutoManual(
     unidade: dados.unidade ?? 'UN',
     estoque: dados.estoque ?? 0,
     ativo: true,
+    url: dados.url,
     origem: 'manual',
   };
 
@@ -1033,6 +1005,7 @@ type LeituraConferenciaSQLite = {
   primeira_leitura: string;
   ultima_leitura: string;
   status: StatusLeitura;
+  status_revisao: StatusRevisao;
   codigo_interno: string;
   codigo_barras: string | null;
   nome: string;
@@ -1060,6 +1033,7 @@ export async function obterLeiturasConferencia(
         leituras_conferencia.primeira_leitura AS primeira_leitura,
         leituras_conferencia.ultima_leitura AS ultima_leitura,
         leituras_conferencia.status AS status,
+        leituras_conferencia.status_revisao AS status_revisao,
         produtos.codigo_interno AS codigo_interno,
         produtos.codigo_barras AS codigo_barras,
         produtos.nome AS nome,
@@ -1076,7 +1050,7 @@ export async function obterLeiturasConferencia(
       INNER JOIN produtos
         ON produtos.codigo_interno = leituras_conferencia.codigo_interno
       WHERE leituras_conferencia.conferencia_id = ?
-      ORDER BY leituras_conferencia.ultima_leitura DESC;
+      ORDER BY produtos.codigo_interno ASC;
     `,
     conferenciaId,
   );
@@ -1101,6 +1075,7 @@ export async function obterLeiturasConferencia(
     primeiraLeitura: item.primeira_leitura,
     ultimaLeitura: item.ultima_leitura,
     status: item.status,
+    statusRevisao: item.status_revisao,
   }));
 }
 
@@ -1357,4 +1332,62 @@ export async function listarHistorico(): Promise<
     ...converterConferencia(item),
     produtosLidos: item.produtos_lidos,
   }));
+}
+
+// ============================================================
+// MARCAR STATUS DE REVISÃO DE UM ITEM
+// ============================================================
+
+export async function marcarStatusRevisao(
+  conferenciaId: number,
+  codigoInterno: string,
+  status: StatusRevisao,
+): Promise<void> {
+  const db = await obterDatabase();
+
+  await db.runAsync(
+    `
+      UPDATE leituras_conferencia
+      SET status_revisao = ?
+      WHERE conferencia_id = ? AND codigo_interno = ?;
+    `,
+    status,
+    conferenciaId,
+    codigoInterno,
+  );
+}
+
+// ============================================================
+// RESUMO DE REVISÃO DE UMA CONFERÊNCIA
+// ============================================================
+
+export async function obterResumoRevisao(
+  conferenciaId: number,
+): Promise<ResumoRevisao> {
+  const db = await obterDatabase();
+
+  const resultado = await db.getFirstAsync<{
+    ok: number;
+    divergencia: number;
+    pendente: number;
+    total: number;
+  }>(
+    `
+      SELECT
+        SUM(CASE WHEN status_revisao = 'ok' THEN 1 ELSE 0 END) AS ok,
+        SUM(CASE WHEN status_revisao = 'divergencia' THEN 1 ELSE 0 END) AS divergencia,
+        SUM(CASE WHEN status_revisao = 'pendente' THEN 1 ELSE 0 END) AS pendente,
+        COUNT(*) AS total
+      FROM leituras_conferencia
+      WHERE conferencia_id = ?;
+    `,
+    conferenciaId,
+  );
+
+  return {
+    ok: resultado?.ok ?? 0,
+    divergencia: resultado?.divergencia ?? 0,
+    pendente: resultado?.pendente ?? 0,
+    total: resultado?.total ?? 0,
+  };
 }

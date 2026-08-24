@@ -27,19 +27,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 
 import {
+  atualizarNomeConferencia,
+  atualizarStatusLeitura,
   buscarPorCodigoBarras,
+  cancelarConferencia,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
+  formatarNumeroConferencia,
+  obterConfiguracao,
+  obterConferencia,
   obterLeiturasConferencia,
   registrarLeituraConferencia,
   registrarProdutoDesconhecido,
   removerLeituraConferencia,
-  atualizarStatusLeitura,
-  obterConfiguracao,
-  atualizarNomeConferencia,
-  obterConferencia,
-  cancelarConferencia,
 } from '@/database/database';
+
+import { CORES_STATUS } from '@/constants/cores';
 
 import type {
   DadosProdutoRapido,
@@ -48,80 +51,15 @@ import type {
 } from '@/models/produto';
 
 // ============================================================
-// FORMATAR NÚMERO DE CONFERÊNCIA PARA EXIBIÇÃO
-// ============================================================
-
-function formatarNumeroConferencia(id: number): string {
-  return `#${String(id).padStart(6, '0')}`;
-}
-
-// ============================================================
 // TEMPO DE BLOQUEIO PARA O MESMO CÓDIGO
 // ============================================================
 
 const TEMPO_BLOQUEIO_MESMO_CODIGO_MS_PADRAO = 2500;
 
 // ============================================================
-// CORES POR STATUS DE LEITURA
-// ============================================================
-
-const CORES_STATUS: Record<
-  StatusLeitura,
-  { fundo: string; borda: string; texto: string; etiqueta: string }
-> = {
-  normal: {
-    fundo: '#EAF4FF',
-    borda: '#208AEF',
-    texto: '#175CD3',
-    etiqueta: 'OK',
-  },
-  novo: {
-    fundo: '#FFFBEA',
-    borda: '#F2C94C',
-    texto: '#9A7B00',
-    etiqueta: 'NOVO',
-  },
-  desconhecido: {
-    fundo: '#FFF1F0',
-    borda: '#F04438',
-    texto: '#B42318',
-    etiqueta: 'DESCONHECIDO',
-  },
-};
-
-// ============================================================
 // PANTALLA
 // ============================================================
 
-// ============================================================
-// ZONA REAL DE DETECÇÃO
-// Coincide aproximadamente com o quadrado desenhado na câmera.
-// Se o código detectado cair fora, é ignorado. Se o telefone
-// não informar as coordenadas (alguns Android antigos), aceita
-// a leitura mesmo assim — melhor um falso positivo raro do que
-// parar de detectar códigos válidos.
-// ============================================================
-
-const ZONA_ESCANEAVEL = { x: 0.2, y: 0.15, width: 0.6, height: 0.7 };
-
-function estaNaZona(
-  cornerPoints?: { x: number; y: number }[],
-): boolean {
-  if (!cornerPoints || cornerPoints.length === 0) {
-    return true;
-  }
-
-  return cornerPoints.every((ponto) => {
-    const dentroX =
-      ponto.x >= ZONA_ESCANEAVEL.x &&
-      ponto.x <= ZONA_ESCANEAVEL.x + ZONA_ESCANEAVEL.width;
-    const dentroY =
-      ponto.y >= ZONA_ESCANEAVEL.y &&
-      ponto.y <= ZONA_ESCANEAVEL.y + ZONA_ESCANEAVEL.height;
-
-    return dentroX && dentroY;
-  });
-}
 
 export default function LeituraScreen() {
   const { conferenciaId: conferenciaIdParam } =
@@ -258,90 +196,42 @@ export default function LeituraScreen() {
     };
   }, [conferenciaId, conferenciaValida]);
 
+  // Carrega configurações globais e nome da conferência numa única chamada.
   useEffect(() => {
     let ativo = true;
 
-    async function carregarVelocidade() {
-      const valor = await obterConfiguracao(
-        'tempo_bloqueio_ms',
-        String(TEMPO_BLOQUEIO_MESMO_CODIGO_MS_PADRAO),
-      );
+    async function carregarConfiguracoes() {
+      const [velocidade, modo, som, vibrar, conferencia] = await Promise.all([
+        obterConfiguracao('tempo_bloqueio_ms', String(TEMPO_BLOQUEIO_MESMO_CODIGO_MS_PADRAO)),
+        obterConfiguracao('modo_leitura', 'automatico'),
+        obterConfiguracao('som_ativado', 'true'),
+        obterConfiguracao('vibrar_ativado', 'true'),
+        conferenciaValida ? obterConferencia(conferenciaId) : Promise.resolve(null),
+      ]);
 
-      if (ativo) {
-        setTempoBloqueioMs(Number(valor));
-      }
-    }
-
-    carregarVelocidade();
-
-    return () => {
-      ativo = false;
-    };
-  }, []);
-
-
-  useEffect(() => {
-    let ativo = true;
-
-    async function carregarNomeConferencia() {
-      if (!conferenciaValida) {
+      if (!ativo) {
         return;
       }
 
-      const conferencia = await obterConferencia(conferenciaId);
+      setTempoBloqueioMs(Number(velocidade));
+      setSomAtivado(som !== 'false');
+      setVibrarAtivado(vibrar !== 'false');
 
-      if (ativo && conferencia) {
+      if (modo === 'automatico' || modo === 'manual') {
+        setModoLeitura(modo);
+      }
+
+      if (conferencia) {
         setNomeConferencia(conferencia.nome);
       }
     }
 
-    carregarNomeConferencia();
+    carregarConfiguracoes();
 
     return () => {
       ativo = false;
     };
   }, [conferenciaId, conferenciaValida]);
-
-
-  useEffect(() => {
-    let ativo = true;
-
-    async function carregarModoLeitura() {
-      const valor = await obterConfiguracao('modo_leitura', 'automatico');
-
-      if (ativo && (valor === 'automatico' || valor === 'manual')) {
-        setModoLeitura(valor);
-      }
-    }
-
-    carregarModoLeitura();
-
-    return () => {
-      ativo = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let ativo = true;
-
-    async function carregarSomVibracao() {
-      const [som, vibrar] = await Promise.all([
-        obterConfiguracao('som_ativado', 'true'),
-        obterConfiguracao('vibrar_ativado', 'true'),
-      ]);
-
-      if (ativo) {
-        setSomAtivado(som === 'true');
-        setVibrarAtivado(vibrar === 'true');
-      }
-    }
-
-    carregarSomVibracao();
-
-    return () => {
-      ativo = false;
-    };
-  }, []);
   async function ativarCamera() {
     if (!permission) {
       return;
@@ -438,6 +328,7 @@ export default function LeituraScreen() {
           primeiraLeitura,
           ultimaLeitura: agora,
           status: statusFinal,
+          statusRevisao: 'pendente',
         };
 
         setUltimoProduto(novoItem);
@@ -481,18 +372,8 @@ export default function LeituraScreen() {
     }
   }
 
-  function handleBarcodeScanned({
-    data,
-    cornerPoints,
-  }: {
-    data: string;
-    cornerPoints?: { x: number; y: number }[];
-  }) {
+  function handleBarcodeScanned({ data }: { data: string }) {
     if (!data) {
-      return;
-    }
-
-    if (!estaNaZona(cornerPoints)) {
       return;
     }
 
@@ -860,30 +741,12 @@ return (
               ],
             }}
           >
-            <View style={styles.scannerFrame}>
-              <View style={styles.scannerCornerTopLeft} />
-              <View style={styles.scannerCornerTopRight} />
-              <View style={styles.scannerCornerBottomLeft} />
-              <View style={styles.scannerCornerBottomRight} />
-            </View>
+            {/* Cantos do quadro sobrepostos nas bordas da câmera */}
+            <View style={styles.cornerTopLeft} />
+            <View style={styles.cornerTopRight} />
+            <View style={styles.cornerBottomLeft} />
+            <View style={styles.cornerBottomRight} />
 
-            {modoLeitura === 'manual' ? (
-              <Pressable
-                style={styles.lerButton}
-                onPress={handlePressionarLer}
-                disabled={escutandoManual}
-              >
-                <Text style={styles.lerButtonText}>
-                  {escutandoManual ? 'LENDO...' : 'TOCAR PARA LER'}
-                </Text>
-              </Pressable>
-            ) : (
-              <View style={styles.cameraHint}>
-                <Text style={styles.cameraHintText}>
-                  Aponte para o código de barras
-                </Text>
-              </View>
-            )}
           </CameraView>
         ) : (
           <Pressable
@@ -902,6 +765,29 @@ return (
           </Pressable>
         )}
       </View>
+
+      {cameraAtiva && (
+        modoLeitura === 'manual' ? (
+          <Pressable
+            style={[
+              styles.lerButton,
+              escutandoManual && styles.lerButtonAtivo,
+            ]}
+            onPress={handlePressionarLer}
+            disabled={escutandoManual}
+          >
+            <Text style={styles.lerButtonText}>
+              {escutandoManual ? 'LENDO...' : 'TOCAR PARA LER'}
+            </Text>
+          </Pressable>
+        ) : (
+          <View style={styles.cameraHint}>
+            <Text style={styles.cameraHintText}>
+              Aponte para o código de barras
+            </Text>
+          </View>
+        )
+      )}
 
       {processando && (
         <View style={styles.statusBox}>
@@ -1429,10 +1315,10 @@ const styles = StyleSheet.create({
   },
 
   cameraContainer: {
-    height: 190,
+    height: 220,
     marginHorizontal: 18,
     marginTop: 12,
-    borderRadius: 18,
+    borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#101828',
   },
@@ -1465,75 +1351,70 @@ const styles = StyleSheet.create({
     color: '#EAF4FF',
   },
 
-  scannerFrame: {
+  cornerTopLeft: {
     position: 'absolute',
-    top: 35,
-    left: 45,
-    right: 45,
-    bottom: 35,
-  },
-
-  scannerCornerTopLeft: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 30,
-    height: 30,
+    top: 12,
+    left: 12,
+    width: 28,
+    height: 28,
     borderTopWidth: 4,
     borderLeftWidth: 4,
     borderColor: '#FFFFFF',
+    borderTopLeftRadius: 4,
   },
 
-  scannerCornerTopRight: {
+  cornerTopRight: {
     position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 30,
-    height: 30,
+    top: 12,
+    right: 12,
+    width: 28,
+    height: 28,
     borderTopWidth: 4,
     borderRightWidth: 4,
     borderColor: '#FFFFFF',
+    borderTopRightRadius: 4,
   },
 
-  scannerCornerBottomLeft: {
+  cornerBottomLeft: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: 30,
-    height: 30,
+    bottom: 12,
+    left: 12,
+    width: 28,
+    height: 28,
     borderBottomWidth: 4,
     borderLeftWidth: 4,
     borderColor: '#FFFFFF',
+    borderBottomLeftRadius: 4,
   },
 
-  scannerCornerBottomRight: {
+  cornerBottomRight: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 30,
-    height: 30,
+    bottom: 12,
+    right: 12,
+    width: 28,
+    height: 28,
     borderBottomWidth: 4,
     borderRightWidth: 4,
     borderColor: '#FFFFFF',
+    borderBottomRightRadius: 4,
   },
 
   cameraHint: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 10,
+    marginHorizontal: 18,
+    marginTop: 6,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E4E7EC',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 
   cameraHintText: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#667085',
   },
 
   statusBox: {
@@ -2100,19 +1981,24 @@ const styles = StyleSheet.create({
   },
 
   lerButton: {
-    height: 46,
-    paddingHorizontal: 24,
-    borderRadius: 13,
-    backgroundColor: 'rgba(32, 138, 239, 0.92)',
+    marginHorizontal: 18,
+    marginTop: 6,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: '#208AEF',
     alignItems: 'center',
     justifyContent: 'center',
   },
 
+  lerButtonAtivo: {
+    backgroundColor: '#1570C8',
+  },
+
   lerButtonText: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '900',
     color: '#FFFFFF',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
 
   redFeedback: {

@@ -1,8 +1,4 @@
-// ============================================================
-// CONFIGURAÇÕES — RAMSONS CONFERÊNCIA
-// Parte 1/2 — Estado e lógica
-// ============================================================
-
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -11,6 +7,7 @@ import {
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -19,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   apagarHistoricoFinalizado,
+  contarProdutos,
   contarProdutosPorOrigem,
   obterConfiguracao,
   obterDadosExportacaoHistorico,
@@ -35,11 +33,15 @@ export default function ConfiguracoesScreen() {
   const [velocidadeTexto, setVelocidadeTexto] = useState(
     String(VELOCIDADE_PADRAO_MS),
   );
-
   const [modoLeitura, setModoLeitura] = useState<'automatico' | 'manual'>(
     'automatico',
   );
-
+  const [somAtivado, setSomAtivado] = useState(true);
+  const [vibrarAtivado, setVibrarAtivado] = useState(true);
+  const [totalProdutos, setTotalProdutos] = useState(0);
+  const [catalogoAtualizadoEm, setCatalogoAtualizadoEm] = useState<
+    string | null
+  >(null);
   const [produtosParaRevisar, setProdutosParaRevisar] = useState(0);
 
   const [reimportando, setReimportando] = useState(false);
@@ -59,13 +61,22 @@ export default function ConfiguracoesScreen() {
 
     async function carregar() {
       try {
-        const [velocidade, modo, contagem] = await Promise.all([
-          obterConfiguracao(
-            'tempo_bloqueio_ms',
-            String(VELOCIDADE_PADRAO_MS),
-          ),
+        const [
+          velocidade,
+          modo,
+          som,
+          vibrar,
+          dataAtualizacao,
+          contagem,
+          total,
+        ] = await Promise.all([
+          obterConfiguracao('tempo_bloqueio_ms', String(VELOCIDADE_PADRAO_MS)),
           obterConfiguracao('modo_leitura', 'automatico'),
+          obterConfiguracao('som_ativado', 'true'),
+          obterConfiguracao('vibrar_ativado', 'true'),
+          obterConfiguracao('catalogo_atualizado_em', ''),
           contarProdutosPorOrigem(),
+          contarProdutos(),
         ]);
 
         if (ativo) {
@@ -75,7 +86,11 @@ export default function ConfiguracoesScreen() {
             setModoLeitura(modo);
           }
 
+          setSomAtivado(som !== 'false');
+          setVibrarAtivado(vibrar !== 'false');
+          setCatalogoAtualizadoEm(dataAtualizacao || null);
           setProdutosParaRevisar(contagem.manual + contagem.desconhecido);
+          setTotalProdutos(total);
         }
       } catch (error) {
         console.error('Erro ao carregar configurações:', error);
@@ -116,6 +131,22 @@ export default function ConfiguracoesScreen() {
     });
   }
 
+  function alterarSom(valor: boolean) {
+    setSomAtivado(valor);
+
+    salvarConfiguracao('som_ativado', String(valor)).catch((error) => {
+      console.error('Erro ao salvar configuração de som:', error);
+    });
+  }
+
+  function alterarVibracao(valor: boolean) {
+    setVibrarAtivado(valor);
+
+    salvarConfiguracao('vibrar_ativado', String(valor)).catch((error) => {
+      console.error('Erro ao salvar configuração de vibração:', error);
+    });
+  }
+
   async function reimportarCatalogo() {
     if (reimportando) {
       return;
@@ -126,6 +157,9 @@ export default function ConfiguracoesScreen() {
 
     try {
       const total = await reimportarCatalogoEmbutido();
+      const novaData = await obterConfiguracao('catalogo_atualizado_em', '');
+      setCatalogoAtualizadoEm(novaData || null);
+      setTotalProdutos(await contarProdutos());
       setMensagem(`Catálogo reimportado: ${total} produtos.`);
     } catch (error) {
       console.error('Erro ao reimportar catálogo:', error);
@@ -217,8 +251,15 @@ export default function ConfiguracoesScreen() {
       );
       setMostrarConfirmacaoResetar(false);
 
-      const contagem = await contarProdutosPorOrigem();
+      const [contagem, novoTotal, novaData] = await Promise.all([
+        contarProdutosPorOrigem(),
+        contarProdutos(),
+        obterConfiguracao('catalogo_atualizado_em', ''),
+      ]);
+
       setProdutosParaRevisar(contagem.manual + contagem.desconhecido);
+      setTotalProdutos(novoTotal);
+      setCatalogoAtualizadoEm(novaData || null);
     } catch (error) {
       console.error('Erro ao resetar banco de dados:', error);
       setMensagem('Não foi possível resetar o banco de dados.');
@@ -227,7 +268,29 @@ export default function ConfiguracoesScreen() {
     }
   }
 
-if (carregando) {
+  function formatarData(iso: string | null): string {
+    if (!iso) {
+      return 'Desconhecida';
+    }
+
+    const d = new Date(iso);
+
+    if (isNaN(d.getTime())) {
+      return 'Desconhecida';
+    }
+
+    return d.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  const versaoApp = Constants.expoConfig?.version ?? '—';
+
+  if (carregando) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centerContainer}>
@@ -263,54 +326,8 @@ if (carregando) {
             </View>
           )}
 
-          {/* CATÁLOGO */}
-          <Text style={styles.sectionTitle}>CATÁLOGO</Text>
-
-          <Pressable
-            style={[styles.actionCard, reimportando && styles.cardDisabled]}
-            onPress={() => {
-              void reimportarCatalogo();
-            }}
-            disabled={reimportando}
-          >
-            <View style={styles.actionInfo}>
-              <Text style={styles.actionTitle}>
-                Reimportar catálogo embutido
-              </Text>
-              <Text style={styles.actionText}>
-                Resincroniza os produtos do catálogo original.
-                Produtos manuais e não identificados não são
-                afetados.
-              </Text>
-            </View>
-
-            {reimportando ? (
-              <ActivityIndicator size="small" />
-            ) : (
-              <Text style={styles.actionArrow}>›</Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            style={styles.actionCard}
-            onPress={() => router.push('/gerenciar-produtos')}
-          >
-            <View style={styles.actionInfo}>
-              <Text style={styles.actionTitle}>
-                Gerenciar produtos
-              </Text>
-              <Text style={styles.actionText}>
-                {produtosParaRevisar > 0
-                  ? `${produtosParaRevisar} produto(s) manuais ou não identificados para revisar.`
-                  : 'Produtos manuais e não identificados aparecem aqui.'}
-              </Text>
-            </View>
-
-            <Text style={styles.actionArrow}>›</Text>
-          </Pressable>
-
-          {/* VELOCIDADE */}
-          <Text style={styles.sectionTitle}>VELOCIDADE DE LEITURA</Text>
+          {/* LEITURA */}
+          <Text style={styles.sectionTitle}>📷  LEITURA</Text>
 
           <View style={styles.card}>
             <Text style={styles.fieldLabel}>MODO DE LEITURA</Text>
@@ -338,8 +355,7 @@ if (carregando) {
               <Pressable
                 style={[
                   styles.modoLeituraButton,
-                  modoLeitura === 'manual' &&
-                    styles.modoLeituraButtonAtivo,
+                  modoLeitura === 'manual' && styles.modoLeituraButtonAtivo,
                 ]}
                 onPress={() => alterarModoLeitura('manual')}
               >
@@ -363,7 +379,7 @@ if (carregando) {
 
           <View style={styles.card}>
             <Text style={styles.fieldLabel}>
-              TEMPO ANTES DE RELER O MESMO CÓDIGO (MS)
+              PROTEÇÃO CONTRA REPETIÇÃO (MS)
             </Text>
 
             <TextInput
@@ -376,14 +392,120 @@ if (carregando) {
             />
 
             <Text style={styles.fieldHint}>
-              Menor = mais rápido para reler de propósito.{'\n'}
-              Maior = mais seguro contra leitura duplicada
-              (recomendado para produtos grandes).
+              Evita que o mesmo código seja registrado várias
+              vezes rapidamente enquanto permanece diante da
+              câmera.
             </Text>
           </View>
 
+          {/* SOM E VIBRAÇÃO */}
+          <Text style={styles.sectionTitle}>🔊  SOM E VIBRAÇÃO</Text>
+
+          <View style={styles.card}>
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleInfo}>
+                <Text style={styles.toggleLabel}>Som</Text>
+                <Text style={styles.toggleHint}>
+                  Toca um som ao escanear cada código.
+                </Text>
+              </View>
+              <Switch
+                value={somAtivado}
+                onValueChange={alterarSom}
+                trackColor={{ false: '#E4E7EC', true: '#208AEF' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleInfo}>
+                <Text style={styles.toggleLabel}>Vibração</Text>
+                <Text style={styles.toggleHint}>
+                  Vibra ao escanear cada código.
+                </Text>
+              </View>
+              <Switch
+                value={vibrarAtivado}
+                onValueChange={alterarVibracao}
+                trackColor={{ false: '#E4E7EC', true: '#208AEF' }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          </View>
+
+          {/* PRODUTOS */}
+          <Text style={styles.sectionTitle}>📦  PRODUTOS</Text>
+
+          <Pressable
+            style={styles.actionCard}
+            onPress={() => router.push('/consulta-produto')}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Ver produtos</Text>
+              <Text style={styles.actionText}>
+                Busque e edite qualquer produto da base.
+              </Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.actionCard}
+            onPress={() => router.push('/cadastrar-produto')}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Cadastrar produto</Text>
+              <Text style={styles.actionText}>
+                Adicione um produto novo do zero.
+              </Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.actionCard}
+            onPress={() => router.push('/gerenciar-produtos')}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>Gerenciar produtos</Text>
+              <Text style={styles.actionText}>
+                {produtosParaRevisar > 0
+                  ? `${produtosParaRevisar} produto(s) manuais ou não identificados para revisar.`
+                  : 'Produtos manuais e não identificados aparecem aqui.'}
+              </Text>
+            </View>
+            <Text style={styles.actionArrow}>›</Text>
+          </Pressable>
+
           {/* DADOS */}
-          <Text style={styles.sectionTitle}>DADOS</Text>
+          <Text style={styles.sectionTitle}>🗄️  DADOS</Text>
+
+          <Pressable
+            style={[styles.actionCard, reimportando && styles.cardDisabled]}
+            onPress={() => {
+              void reimportarCatalogo();
+            }}
+            disabled={reimportando}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>
+                Reimportar catálogo embutido
+              </Text>
+              <Text style={styles.actionText}>
+                Resincroniza os produtos do catálogo original.
+                Produtos manuais e não identificados não são
+                afetados.
+              </Text>
+            </View>
+
+            {reimportando ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={styles.actionArrow}>›</Text>
+            )}
+          </Pressable>
 
           <Pressable
             style={[styles.actionCard, exportando && styles.cardDisabled]}
@@ -444,6 +566,41 @@ if (carregando) {
 
             <Text style={styles.dangerArrow}>›</Text>
           </Pressable>
+
+          {/* SOBRE */}
+          <Text style={styles.sectionTitle}>ℹ️  SOBRE</Text>
+
+          <View style={styles.card}>
+            <View style={styles.sobreRow}>
+              <Text style={styles.sobreLabel}>Versão</Text>
+              <Text style={styles.sobreValor}>{versaoApp}</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.sobreRow}>
+              <Text style={styles.sobreLabel}>Base de produtos</Text>
+              <Text style={styles.sobreValor}>
+                {totalProdutos} produto(s)
+              </Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.sobreRow}>
+              <Text style={styles.sobreLabel}>Banco de dados</Text>
+              <Text style={styles.sobreValor}>SQLite</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.sobreRow}>
+              <Text style={styles.sobreLabel}>Última atualização</Text>
+              <Text style={styles.sobreValor}>
+                {formatarData(catalogoAtualizadoEm)}
+              </Text>
+            </View>
+          </View>
         </ScrollView>
       </View>
 
@@ -653,6 +810,88 @@ const styles = StyleSheet.create({
     color: '#18212F',
   },
 
+  modoLeituraRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    gap: 8,
+  },
+
+  modoLeituraButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  modoLeituraButtonAtivo: {
+    backgroundColor: '#208AEF',
+    borderColor: '#208AEF',
+  },
+
+  modoLeituraButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#667085',
+  },
+
+  modoLeituraButtonTextAtivo: {
+    color: '#FFFFFF',
+  },
+
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+
+  toggleInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#18212F',
+  },
+
+  toggleHint: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#98A2B3',
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: '#F2F4F7',
+    marginVertical: 12,
+  },
+
+  sobreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+
+  sobreLabel: {
+    fontSize: 13,
+    color: '#667085',
+  },
+
+  sobreValor: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#18212F',
+    flexShrink: 1,
+    textAlign: 'right',
+    marginLeft: 12,
+  },
+
   actionCard: {
     padding: 16,
     borderRadius: 16,
@@ -782,37 +1021,4 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#F04438',
   },
-
-  modoLeituraRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    gap: 8,
-  },
-
-  modoLeituraButton: {
-    flex: 1,
-    height: 42,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#E1E5EA',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  modoLeituraButtonAtivo: {
-    backgroundColor: '#208AEF',
-    borderColor: '#208AEF',
-  },
-
-  modoLeituraButtonText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#667085',
-  },
-
-  modoLeituraButtonTextAtivo: {
-    color: '#FFFFFF',
-  },
 });
-
-

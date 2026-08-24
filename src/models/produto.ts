@@ -94,6 +94,8 @@ export type Conferencia = {
 
 export type StatusLeitura = 'normal' | 'novo' | 'desconhecido';
 
+export type StatusRevisao = 'pendente' | 'ok' | 'divergencia';
+
 export type LeituraConferencia = {
   id: number;
   produto: Produto;
@@ -101,6 +103,14 @@ export type LeituraConferencia = {
   primeiraLeitura: string;
   ultimaLeitura: string;
   status: StatusLeitura;
+  statusRevisao: StatusRevisao;
+};
+
+export type ResumoRevisao = {
+  ok: number;
+  divergencia: number;
+  pendente: number;
+  total: number;
 };
 
 export type DadosProdutoRapido = {

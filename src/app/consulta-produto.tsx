@@ -1,12 +1,8 @@
-// ============================================================
-// CONSULTA DE PRODUTO — RAMSONS CONFERÊNCIA
-// Parte 1/2 — Lógica, buscador e interface
-// ============================================================
-
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Linking,
   Pressable,
   ScrollView,
@@ -17,59 +13,62 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { atualizarProduto, buscarProdutos } from '@/database/database';
+import {
+  obterProdutos,
+  removerProduto,
+} from '@/database/database';
 import type { Produto } from '@/models/produto';
 
-// ============================================================
-// TELA
-// ============================================================
-
 export default function ConsultaProdutoScreen() {
+  const [todos, setTodos] = useState<Produto[]>([]);
   const [termo, setTermo] = useState('');
-  const [resultados, setResultados] = useState<Produto[]>([]);
-  const [buscando, setBuscando] = useState(false);
+  const [carregando, setCarregando] = useState(true);
   const [produtoSelecionado, setProdutoSelecionado] =
     useState<Produto | null>(null);
 
-  // ==========================================================
-  // BUSCAR COM PEQUENO ATRASO (evita disparar uma consulta
-  // a cada tecla digitada)
-  // ==========================================================
+  // Recarrega sempre que a tela entra em foco (ex: ao voltar da edição).
+  useFocusEffect(
+    useCallback(() => {
+      let ativo = true;
 
-  useEffect(() => {
-    const termoLimpo = termo.trim();
+      setCarregando(true);
+      obterProdutos()
+        .then((lista) => {
+          if (ativo) setTodos(lista);
+        })
+        .catch((error) => {
+          console.error('Erro ao carregar produtos:', error);
+        })
+        .finally(() => {
+          if (ativo) setCarregando(false);
+        });
 
-    if (termoLimpo.length < 2) {
-      setResultados([]);
-      setBuscando(false);
-      return;
+      return () => {
+        ativo = false;
+      };
+    }, []),
+  );
+
+  // Filtra client-side sem delay — lista já está em memória.
+  const resultados = useMemo(() => {
+    const t = termo.trim().toLowerCase();
+
+    if (!t) {
+      return todos;
     }
 
-    setBuscando(true);
-
-    const timeoutId = setTimeout(async () => {
-      try {
-        const lista = await buscarProdutos(termoLimpo);
-        setResultados(lista);
-      } catch (error) {
-        console.error('Erro ao buscar produtos:', error);
-      } finally {
-        setBuscando(false);
-      }
-    }, 300);
-
-    return () => clearTimeout(timeoutId);
-  }, [termo]);
-
-  // ==========================================================
-  // ABRIR LINK NO NAVEGADOR PADRÃO
-  // ==========================================================
+    return todos.filter(
+      (p) =>
+        p.nome.toLowerCase().includes(t) ||
+        p.codigoInterno.toLowerCase().includes(t) ||
+        (p.codigoBarras && p.codigoBarras.includes(t)) ||
+        (p.marca && p.marca.toLowerCase().includes(t)),
+    );
+  }, [termo, todos]);
 
   async function abrirLink(url: string) {
     try {
-      const suportado = await Linking.canOpenURL(url);
-
-      if (suportado) {
+      if (await Linking.canOpenURL(url)) {
         await Linking.openURL(url);
       }
     } catch (error) {
@@ -77,27 +76,12 @@ export default function ConsultaProdutoScreen() {
     }
   }
 
-  // ==========================================================
-  // ATUALIZAR PRODUTO APÓS EDIÇÃO
-  // Reflete a mudança tanto na lista de resultados quanto
-  // no modal aberto, sem precisar buscar de novo.
-  // ==========================================================
-
-  function handleProdutoAtualizado(produtoAtualizado: Produto) {
-    setResultados((lista) =>
-      lista.map((item) =>
-        item.codigoInterno === produtoAtualizado.codigoInterno
-          ? produtoAtualizado
-          : item,
-      ),
+  function handleProdutoRemovido(codigoInterno: string) {
+    setTodos((lista) =>
+      lista.filter((item) => item.codigoInterno !== codigoInterno),
     );
-
-    setProdutoSelecionado(produtoAtualizado);
+    setProdutoSelecionado(null);
   }
-
-  // ==========================================================
-  // INTERFACE
-  // ==========================================================
 
   return (
     <SafeAreaView style={styles.container}>
@@ -105,16 +89,20 @@ export default function ConsultaProdutoScreen() {
 
         {/* Cabeçalho */}
         <View style={styles.header}>
-          <Pressable
-            style={styles.backButton}
-            onPress={() => router.back()}
-          >
+          <Pressable style={styles.backButton} onPress={() => router.back()}>
             <Text style={styles.backIcon}>‹</Text>
           </Pressable>
 
-          <Text style={styles.headerTitle}>
-            CONSULTAR PRODUTO
-          </Text>
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle}>PRODUTOS</Text>
+            {!carregando && (
+              <Text style={styles.headerCount}>
+                {resultados.length === todos.length
+                  ? `${todos.length} produto(s)`
+                  : `${resultados.length} de ${todos.length}`}
+              </Text>
+            )}
+          </View>
 
           <View style={styles.headerSpace} />
         </View>
@@ -125,72 +113,95 @@ export default function ConsultaProdutoScreen() {
 
           <TextInput
             style={styles.searchInput}
-            placeholder="Código interno, código de barras ou nome"
+            placeholder="Nome, código interno, código de barras ou marca"
             placeholderTextColor="#98A2B3"
             value={termo}
             onChangeText={setTermo}
             autoCapitalize="none"
           />
 
-          {buscando && <ActivityIndicator size="small" />}
+          {termo.length > 0 && (
+            <Pressable onPress={() => setTermo('')} style={styles.clearButton}>
+              <Text style={styles.clearIcon}>✕</Text>
+            </Pressable>
+          )}
         </View>
 
-        {/* Resultados */}
-        {termo.trim().length < 2 ? (
+        {/* Lista */}
+        {carregando ? (
           <View style={styles.centerContainer}>
-            <Text style={styles.emptyIcon}>🔍</Text>
-            <Text style={styles.emptyText}>
-              Digite pelo menos 2 caracteres para buscar.
-            </Text>
+            <ActivityIndicator size="large" />
+            <Text style={styles.loadingText}>Carregando produtos...</Text>
           </View>
-        ) : !buscando && resultados.length === 0 ? (
+        ) : resultados.length === 0 ? (
           <View style={styles.centerContainer}>
             <Text style={styles.emptyIcon}>📦</Text>
             <Text style={styles.emptyText}>
-              Nenhum produto encontrado para "{termo}".
+              {termo.trim()
+                ? `Nenhum produto encontrado para "${termo.trim()}".`
+                : 'Nenhum produto cadastrado.'}
             </Text>
           </View>
         ) : (
-          <ScrollView
-            showsVerticalScrollIndicator={false}
+          <FlatList
+            data={resultados}
+            keyExtractor={(item) => item.codigoInterno}
             contentContainerStyle={styles.list}
-          >
-            {resultados.map((produto) => (
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => (
               <Pressable
-                key={produto.codigoInterno}
                 style={styles.card}
-                onPress={() => setProdutoSelecionado(produto)}
+                onPress={() => setProdutoSelecionado(item)}
               >
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardCode}>{item.codigoInterno}</Text>
+
+                  <View
+                    style={[
+                      styles.origemBadge,
+                      item.origem === 'manual' && styles.origemManual,
+                      item.origem === 'desconhecido' && styles.origemDesconhecido,
+                    ]}
+                  >
+                    <Text style={styles.origemBadgeText}>
+                      {item.origem === 'catalogo'
+                        ? 'CATÁLOGO'
+                        : item.origem === 'manual'
+                        ? 'MANUAL'
+                        : 'NÃO IDENT.'}
+                    </Text>
+                  </View>
+                </View>
+
                 <Text style={styles.cardName} numberOfLines={2}>
-                  {produto.nome}
+                  {item.nome}
                 </Text>
 
                 <View style={styles.cardMeta}>
-                  <Text style={styles.cardCode}>
-                    {produto.codigoInterno}
-                  </Text>
-
-                  {produto.marca && (
-                    <Text style={styles.cardBrand}>{produto.marca}</Text>
+                  {item.marca && (
+                    <Text style={styles.cardBrand}>{item.marca}</Text>
+                  )}
+                  {item.categoria && (
+                    <Text style={styles.cardCategory}>{item.categoria}</Text>
                   )}
                 </View>
 
                 <Text style={styles.cardBarcode}>
-                  {produto.codigoBarras || 'sem código de barras'}
+                  {item.codigoBarras || 'sem código de barras'}
                 </Text>
               </Pressable>
-            ))}
-          </ScrollView>
+            )}
+          />
         )}
       </View>
 
-      {/* Modal de detalhe / edição */}
       {produtoSelecionado && (
         <DetalheProdutoModal
           produto={produtoSelecionado}
           onFechar={() => setProdutoSelecionado(null)}
           onAbrirLink={abrirLink}
-          onProdutoAtualizado={handleProdutoAtualizado}
+          onProdutoRemovido={handleProdutoRemovido}
         />
       )}
     </SafeAreaView>
@@ -198,106 +209,43 @@ export default function ConsultaProdutoScreen() {
 }
 
 // ============================================================
-// PARTE 2/2 — Modal de detalhe/edição do produto + estilos
-// ============================================================
-
-// ============================================================
-// MODAL DE DETALHE / EDIÇÃO DO PRODUTO
+// MODAL DE DETALHE / EDIÇÃO / EXCLUSÃO
 // ============================================================
 
 type DetalheProdutoModalProps = {
   produto: Produto;
   onFechar: () => void;
   onAbrirLink: (url: string) => void;
-  onProdutoAtualizado: (produto: Produto) => void;
+  onProdutoRemovido: (codigoInterno: string) => void;
 };
 
 function DetalheProdutoModal({
   produto,
   onFechar,
   onAbrirLink,
-  onProdutoAtualizado,
+  onProdutoRemovido,
 }: DetalheProdutoModalProps) {
-  const [editando, setEditando] = useState(false);
-  const [salvando, setSalvando] = useState(false);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-
-  const [nome, setNome] = useState(produto.nome);
-  const [codigoBarras, setCodigoBarras] = useState(produto.codigoBarras);
-  const [marca, setMarca] = useState(produto.marca ?? '');
-  const [categoria, setCategoria] = useState(produto.categoria ?? '');
-  const [modelo, setModelo] = useState(produto.modelo ?? '');
-  const [unidade, setUnidade] = useState(produto.unidade ?? 'UN');
-  const [estoque, setEstoque] = useState(String(produto.estoque ?? 0));
 
   const especificacoes = produto.especificacoes
     ? Object.entries(produto.especificacoes)
     : [];
 
-  const nomeValido = nome.trim().length >= 3;
+  async function confirmarExclusao() {
+    if (excluindo) return;
 
-  // ==========================================================
-  // INICIAR EDIÇÃO
-  // Sempre "recarrega" os campos a partir do produto atual,
-  // para nunca mostrar dados de uma edição anterior.
-  // ==========================================================
-
-  function comecarEdicao() {
-    setNome(produto.nome);
-    setCodigoBarras(produto.codigoBarras);
-    setMarca(produto.marca ?? '');
-    setCategoria(produto.categoria ?? '');
-    setModelo(produto.modelo ?? '');
-    setUnidade(produto.unidade ?? 'UN');
-    setEstoque(String(produto.estoque ?? 0));
-    setErro(null);
-    setEditando(true);
-  }
-
-  // ==========================================================
-  // SALVAR EDIÇÃO
-  // Marca o produto como 'manual' para que uma futura
-  // reimportação do catálogo embutido não sobrescreva a
-  // correção feita aqui.
-  // ==========================================================
-
-  async function salvarEdicao() {
-    if (!nomeValido || salvando) {
-      return;
-    }
-
-    setSalvando(true);
-    setErro(null);
+    setExcluindo(true);
 
     try {
-      const produtoAtualizado: Produto = {
-        ...produto,
-        nome: nome.trim(),
-        codigoBarras: codigoBarras.trim(),
-        marca: marca.trim() || undefined,
-        categoria: categoria.trim() || undefined,
-        modelo: modelo.trim() || undefined,
-        unidade: unidade.trim() || 'UN',
-        estoque: Number(estoque) || 0,
-        origem: 'manual',
-      };
-
-      const sucesso = await atualizarProduto(produtoAtualizado);
-
-      if (!sucesso) {
-        setErro('Não foi possível salvar: produto não encontrado.');
-        return;
-      }
-
-      onProdutoAtualizado(produtoAtualizado);
-      setEditando(false);
-    } catch (error) {
-      console.error('Erro ao atualizar produto:', error);
-      setErro(
-        'Não foi possível salvar. Verifique se o código de barras já não está em uso por outro produto.',
-      );
+      await removerProduto(produto.codigoInterno);
+      onProdutoRemovido(produto.codigoInterno);
+    } catch {
+      setErro('Não foi possível remover o produto.');
+      setConfirmandoExclusao(false);
     } finally {
-      setSalvando(false);
+      setExcluindo(false);
     }
   }
 
@@ -306,7 +254,7 @@ function DetalheProdutoModal({
       <View style={styles.detailCard}>
         <View style={styles.detailHeader}>
           <Text style={styles.detailHeaderTitle} numberOfLines={1}>
-            {editando ? 'EDITAR PRODUTO' : 'DETALHES DO PRODUTO'}
+            {confirmandoExclusao ? 'EXCLUIR PRODUTO' : 'DETALHES DO PRODUTO'}
           </Text>
 
           <Pressable onPress={onFechar} style={styles.detailCloseButton}>
@@ -314,226 +262,158 @@ function DetalheProdutoModal({
           </Pressable>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {erro && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorBoxText}>{erro}</Text>
-            </View>
-          )}
+        {confirmandoExclusao ? (
+          <View style={styles.confirmExclusao}>
+            <Text style={styles.confirmExclusaoIcon}>⚠️</Text>
+            <Text style={styles.confirmExclusaoTitulo}>
+              Excluir este produto?
+            </Text>
+            <Text style={styles.confirmExclusaoNome}>{produto.nome}</Text>
+            <Text style={styles.confirmExclusaoAviso}>
+              O produto será desativado. Leituras em conferências existentes
+              não serão afetadas.
+            </Text>
 
-          {editando ? (
-            <>
-              <Text style={styles.editLabel}>CÓDIGO INTERNO</Text>
-              <View style={styles.readOnlyBox}>
-                <Text style={styles.readOnlyText}>
-                  {produto.codigoInterno}
-                </Text>
-              </View>
+            {erro ? <Text style={styles.errorBoxText}>{erro}</Text> : null}
 
-              <Text style={styles.editLabel}>NOME *</Text>
-              <TextInput
-                style={styles.editInput}
-                value={nome}
-                onChangeText={setNome}
-                placeholder="Nome do produto"
-                placeholderTextColor="#98A2B3"
-                editable={!salvando}
-              />
-
-              <Text style={styles.editLabel}>CÓDIGO DE BARRAS</Text>
-              <TextInput
-                style={styles.editInput}
-                value={codigoBarras}
-                onChangeText={setCodigoBarras}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-                keyboardType="number-pad"
-                editable={!salvando}
-              />
-
-              <Text style={styles.editLabel}>MARCA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={marca}
-                onChangeText={setMarca}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-                editable={!salvando}
-              />
-
-              <Text style={styles.editLabel}>CATEGORIA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={categoria}
-                onChangeText={setCategoria}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-                editable={!salvando}
-              />
-
-              <Text style={styles.editLabel}>MODELO</Text>
-              <TextInput
-                style={styles.editInput}
-                value={modelo}
-                onChangeText={setModelo}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-                editable={!salvando}
-              />
-
-              <View style={styles.row}>
-                <View style={styles.rowItem}>
-                  <Text style={styles.editLabel}>UNIDADE</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={unidade}
-                    onChangeText={(valor) =>
-                      setUnidade(valor.toUpperCase().slice(0, 8))
-                    }
-                    placeholder="UN"
-                    placeholderTextColor="#98A2B3"
-                    autoCapitalize="characters"
-                    editable={!salvando}
-                  />
-                </View>
-
-                <View style={styles.rowItem}>
-                  <Text style={styles.editLabel}>ESTOQUE</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={estoque}
-                    onChangeText={setEstoque}
-                    placeholder="0"
-                    placeholderTextColor="#98A2B3"
-                    keyboardType="number-pad"
-                    editable={!salvando}
-                  />
-                </View>
-              </View>
-
-              <Pressable
-                style={[
-                  styles.saveButton,
-                  (!nomeValido || salvando) && styles.buttonDisabled,
-                ]}
-                onPress={() => {
-                  void salvarEdicao();
-                }}
-                disabled={!nomeValido || salvando}
-              >
-                {salvando ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveButtonText}>
-                    SALVAR ALTERAÇÕES
-                  </Text>
-                )}
-              </Pressable>
-
-              <Pressable
-                style={styles.cancelEditButton}
-                onPress={() => {
-                  setEditando(false);
-                  setErro(null);
-                }}
-                disabled={salvando}
-              >
-                <Text style={styles.cancelEditButtonText}>CANCELAR</Text>
-              </Pressable>
-
-              <View style={styles.editDividerBig} />
-            </>
-          ) : (
-            <>
-              <Text style={styles.detailName}>{produto.nome}</Text>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Código interno</Text>
-                <Text style={styles.detailValue}>
-                  {produto.codigoInterno}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Código de barras</Text>
-                <Text style={styles.detailValue}>
-                  {produto.codigoBarras || 'não informado'}
-                </Text>
-              </View>
-
-              {produto.marca && (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Marca</Text>
-                  <Text style={styles.detailValue}>{produto.marca}</Text>
-                </View>
-              )}
-
-              {produto.categoria && (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Categoria</Text>
-                  <Text style={styles.detailValue}>
-                    {produto.categoria}
-                  </Text>
-                </View>
-              )}
-
-              {produto.modelo && (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Modelo</Text>
-                  <Text style={styles.detailValue}>{produto.modelo}</Text>
-                </View>
-              )}
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Unidade</Text>
-                <Text style={styles.detailValue}>
-                  {produto.unidade || 'UN'}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Estoque</Text>
-                <Text style={styles.detailValue}>
-                  {produto.estoque ?? 0}
-                </Text>
-              </View>
-
-              <Pressable style={styles.editButton} onPress={comecarEdicao}>
-                <Text style={styles.editButtonText}>
-                  ✏️ EDITAR PRODUTO
-                </Text>
-              </Pressable>
-            </>
-          )}
-
-          {produto.url && (
             <Pressable
-              style={styles.linkButton}
-              onPress={() => onAbrirLink(produto.url!)}
+              style={[styles.dangerButton, excluindo && styles.buttonDisabled]}
+              onPress={() => void confirmarExclusao()}
+              disabled={excluindo}
             >
-              <Text style={styles.linkButtonText}>
-                🔗 ABRIR PÁGINA DO PRODUTO
-              </Text>
+              {excluindo ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.dangerButtonText}>SIM, EXCLUIR</Text>
+              )}
             </Pressable>
-          )}
 
-          {especificacoes.length > 0 && (
-            <>
-              <Text style={styles.detailSectionTitle}>
-                ESPECIFICAÇÕES TÉCNICAS
+            <Pressable
+              style={styles.cancelEditButton}
+              onPress={() => setConfirmandoExclusao(false)}
+              disabled={excluindo}
+            >
+              <Text style={styles.cancelEditButtonText}>CANCELAR</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <Text style={styles.detailName}>{produto.nome}</Text>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Código interno</Text>
+              <Text style={styles.detailValue}>{produto.codigoInterno}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Código de barras</Text>
+              <Text style={styles.detailValue}>
+                {produto.codigoBarras || 'não informado'}
               </Text>
+            </View>
 
-              <View style={styles.specsCard}>
-                {especificacoes.map(([chave, valor]) => (
-                  <View key={chave} style={styles.specRow}>
-                    <Text style={styles.specLabel}>{chave}</Text>
-                    <Text style={styles.specValue}>{valor}</Text>
-                  </View>
-                ))}
+            {produto.marca && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Marca</Text>
+                <Text style={styles.detailValue}>{produto.marca}</Text>
               </View>
-            </>
-          )}
-        </ScrollView>
+            )}
+
+            {produto.categoria && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Categoria</Text>
+                <Text style={styles.detailValue}>{produto.categoria}</Text>
+              </View>
+            )}
+
+            {produto.modelo && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Modelo</Text>
+                <Text style={styles.detailValue}>{produto.modelo}</Text>
+              </View>
+            )}
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Unidade</Text>
+              <Text style={styles.detailValue}>{produto.unidade || 'UN'}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Estoque</Text>
+              <Text style={styles.detailValue}>{produto.estoque ?? 0}</Text>
+            </View>
+
+            {produto.url && (
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>URL</Text>
+                <Text style={styles.detailValue} numberOfLines={1}>
+                  {produto.url}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Origem</Text>
+              <Text style={styles.detailValue}>
+                {produto.origem === 'catalogo'
+                  ? 'Catálogo RAMSONS'
+                  : produto.origem === 'manual'
+                  ? 'Cadastrado manualmente'
+                  : 'Não identificado'}
+              </Text>
+            </View>
+
+            {/* Editar — navega ao formulário completo */}
+            <Pressable
+              style={styles.editButton}
+              onPress={() => {
+                onFechar();
+                router.push(
+                  `/cadastrar-produto?codigoInterno=${encodeURIComponent(produto.codigoInterno)}`,
+                );
+              }}
+            >
+              <Text style={styles.editButtonText}>✏️  EDITAR PRODUTO</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.deleteButton}
+              onPress={() => {
+                setErro(null);
+                setConfirmandoExclusao(true);
+              }}
+            >
+              <Text style={styles.deleteButtonText}>🗑️  EXCLUIR PRODUTO</Text>
+            </Pressable>
+
+            {produto.url && (
+              <Pressable
+                style={styles.linkButton}
+                onPress={() => onAbrirLink(produto.url!)}
+              >
+                <Text style={styles.linkButtonText}>
+                  🔗  ABRIR PÁGINA DO PRODUTO
+                </Text>
+              </Pressable>
+            )}
+
+            {especificacoes.length > 0 && (
+              <>
+                <Text style={styles.detailSectionTitle}>
+                  ESPECIFICAÇÕES TÉCNICAS
+                </Text>
+                <View style={styles.specsCard}>
+                  {especificacoes.map(([chave, valor]) => (
+                    <View key={chave} style={styles.specRow}>
+                      <Text style={styles.specLabel}>{chave}</Text>
+                      <Text style={styles.specValue}>{valor}</Text>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+          </ScrollView>
+        )}
       </View>
     </View>
   );
@@ -574,22 +454,30 @@ const styles = StyleSheet.create({
     color: '#18212F',
   },
 
-  headerTitle: {
+  headerCenter: {
     flex: 1,
+    alignItems: 'center',
+  },
+
+  headerTitle: {
     fontSize: 15,
     fontWeight: '800',
     color: '#18212F',
-    textAlign: 'center',
+  },
+
+  headerCount: {
+    marginTop: 1,
+    fontSize: 11,
+    color: '#667085',
   },
 
   headerSpace: {
     width: 44,
   },
 
-  // Buscador
   searchBox: {
     height: 50,
-    marginTop: 8,
+    marginBottom: 8,
     paddingHorizontal: 14,
     borderRadius: 13,
     backgroundColor: '#FFFFFF',
@@ -610,11 +498,31 @@ const styles = StyleSheet.create({
     color: '#18212F',
   },
 
+  clearButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F2F4F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  clearIcon: {
+    fontSize: 11,
+    color: '#667085',
+  },
+
   centerContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 30,
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#667085',
   },
 
   emptyIcon: {
@@ -630,7 +538,7 @@ const styles = StyleSheet.create({
   },
 
   list: {
-    paddingTop: 12,
+    paddingTop: 4,
     paddingBottom: 20,
     gap: 8,
   },
@@ -643,17 +551,11 @@ const styles = StyleSheet.create({
     borderColor: '#E4E7EC',
   },
 
-  cardName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#18212F',
-  },
-
-  cardMeta: {
-    marginTop: 6,
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'space-between',
+    marginBottom: 4,
   },
 
   cardCode: {
@@ -662,18 +564,55 @@ const styles = StyleSheet.create({
     color: '#208AEF',
   },
 
-  cardBrand: {
-    fontSize: 12,
+  origemBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#EAF4FF',
+  },
+
+  origemManual: {
+    backgroundColor: '#FFFBEA',
+  },
+
+  origemDesconhecido: {
+    backgroundColor: '#FFF1F0',
+  },
+
+  origemBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
     color: '#667085',
   },
 
-  cardBarcode: {
+  cardName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#18212F',
+  },
+
+  cardMeta: {
     marginTop: 4,
+    flexDirection: 'row',
+    gap: 8,
+  },
+
+  cardBrand: {
+    fontSize: 11,
+    color: '#667085',
+  },
+
+  cardCategory: {
     fontSize: 11,
     color: '#98A2B3',
   },
 
-  // Modal de detalhe / edição
+  cardBarcode: {
+    marginTop: 3,
+    fontSize: 11,
+    color: '#98A2B3',
+  },
+
   overlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -685,7 +624,7 @@ const styles = StyleSheet.create({
   detailCard: {
     width: '100%',
     maxWidth: 420,
-    maxHeight: '88%',
+    maxHeight: '90%',
     padding: 20,
     borderRadius: 20,
     backgroundColor: '#FFFFFF',
@@ -695,7 +634,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 12,
   },
 
   detailHeaderTitle: {
@@ -763,6 +702,22 @@ const styles = StyleSheet.create({
     color: '#208AEF',
   },
 
+  deleteButton: {
+    height: 48,
+    marginTop: 10,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#F04438',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  deleteButtonText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#F04438',
+  },
+
   linkButton: {
     height: 48,
     marginTop: 12,
@@ -813,82 +768,65 @@ const styles = StyleSheet.create({
     color: '#344054',
   },
 
-  // ----------------------------------------------------------
-  // MODO EDIÇÃO
-  // ----------------------------------------------------------
+  // Confirmação de exclusão
+  confirmExclusao: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
 
-  errorBox: {
-    padding: 10,
-    borderRadius: 10,
-    backgroundColor: '#FFF1F0',
-    marginBottom: 14,
+  confirmExclusaoIcon: {
+    fontSize: 36,
+    marginBottom: 10,
+  },
+
+  confirmExclusaoTitulo: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#18212F',
+    textAlign: 'center',
+  },
+
+  confirmExclusaoNome: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#667085',
+    textAlign: 'center',
+  },
+
+  confirmExclusaoAviso: {
+    marginTop: 12,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#98A2B3',
+    textAlign: 'center',
+  },
+
+  dangerButton: {
+    width: '100%',
+    height: 50,
+    marginTop: 20,
+    borderRadius: 13,
+    backgroundColor: '#F04438',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  dangerButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 
   errorBoxText: {
+    marginTop: 10,
     fontSize: 12,
     color: '#B42318',
     textAlign: 'center',
   },
 
-  readOnlyBox: {
-    marginTop: 6,
-    height: 44,
-    borderRadius: 11,
-    backgroundColor: '#F2F4F7',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-
-  readOnlyText: {
-    fontSize: 14,
-    color: '#667085',
-  },
-
-  editLabel: {
-    marginTop: 14,
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#667085',
-    letterSpacing: 0.5,
-  },
-
-  editInput: {
-    marginTop: 6,
-    height: 44,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#E1E5EA',
-    paddingHorizontal: 14,
-    fontSize: 14,
-    color: '#18212F',
-  },
-
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-
-  rowItem: {
-    flex: 1,
-  },
-
-  saveButton: {
-    height: 50,
-    marginTop: 20,
-    borderRadius: 13,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
   buttonDisabled: {
     opacity: 0.5,
-  },
-
-  saveButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
   },
 
   cancelEditButton: {
@@ -903,12 +841,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#667085',
   },
-
-  editDividerBig: {
-    height: 1,
-    backgroundColor: '#EEF1F4',
-    marginTop: 8,
-  },
 });
-
-
