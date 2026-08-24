@@ -1147,7 +1147,7 @@ export async function apagarHistoricoFinalizado(): Promise<number> {
 
   await db.withTransactionAsync(async () => {
     const finalizadas = await db.getAllAsync<{ id: number }>(
-      `SELECT id FROM conferencias WHERE status = 'finalizada';`,
+      `SELECT id FROM conferencias WHERE status IN ('finalizada', 'cancelada');`,
     );
 
     for (const item of finalizadas) {
