@@ -608,6 +608,94 @@ export async function reimportarCatalogoEmbutido(): Promise<number> {
 }
 
 // ============================================================
+// IMPORTAR CATÁLOGO DE ARQUIVO EXTERNO (JSON do dispositivo)
+// Substitui somente produtos com origem='catalogo'.
+// Retorna a quantidade de produtos importados.
+// Lança erro com mensagem legível se o arquivo for inválido.
+// ============================================================
+
+export async function importarCatalogoExterno(
+  jsonTexto: string,
+): Promise<number> {
+  let lista: ProdutoImportacao[];
+
+  try {
+    const parsed: unknown = JSON.parse(jsonTexto);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error('O arquivo deve conter um array JSON de produtos.');
+    }
+
+    // Valida que cada item tem pelo menos codigoInterno e nome.
+    for (const item of parsed) {
+      if (
+        typeof item !== 'object' ||
+        item === null ||
+        typeof (item as Record<string, unknown>).codigoInterno !== 'string' ||
+        typeof (item as Record<string, unknown>).nome !== 'string'
+      ) {
+        throw new Error(
+          'Formato inválido: cada produto precisa de "codigoInterno" e "nome".',
+        );
+      }
+    }
+
+    lista = parsed as ProdutoImportacao[];
+  } catch (e) {
+    throw new Error(
+      e instanceof Error ? e.message : 'Arquivo JSON inválido.',
+    );
+  }
+
+  if (lista.length === 0) {
+    throw new Error('O arquivo não contém nenhum produto.');
+  }
+
+  const db = await obterDatabase();
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM produtos WHERE origem = 'catalogo';`);
+
+    for (const produto of lista) {
+      await db.runAsync(
+        `
+          INSERT OR IGNORE INTO produtos (
+            codigo_interno,
+            codigo_barras,
+            nome,
+            marca,
+            categoria,
+            modelo,
+            unidade,
+            estoque,
+            ativo,
+            url,
+            especificacoes,
+            origem
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
+        `,
+        produto.codigoInterno,
+        produto.codigoBarras || null,
+        produto.nome,
+        produto.marca ?? null,
+        produto.categoria ?? null,
+        produto.modelo ?? null,
+        produto.unidade ?? 'UN',
+        produto.estoque ?? 0,
+        produto.ativo === false ? 0 : 1,
+        produto.url ?? null,
+        produto.especificacoes ? JSON.stringify(produto.especificacoes) : null,
+      );
+    }
+  });
+
+  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
+
+  return lista.length;
+}
+
+// ============================================================
 // CRIAR PRODUTO MANUAL (formulário "Cadastrar produto")
 // ============================================================
 

@@ -1,4 +1,6 @@
 import Constants from 'expo-constants';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -18,9 +20,9 @@ import {
   apagarHistoricoFinalizado,
   contarProdutos,
   contarProdutosPorOrigem,
+  importarCatalogoExterno,
   obterConfiguracao,
   obterDadosExportacaoHistorico,
-  reimportarCatalogoEmbutido,
   resetarBancoDeDados,
   salvarConfiguracao,
 } from '@/database/database';
@@ -147,23 +149,40 @@ export default function ConfiguracoesScreen() {
     });
   }
 
-  async function reimportarCatalogo() {
-    if (reimportando) {
-      return;
-    }
+  async function importarCatalogoDoDispositivo() {
+    if (reimportando) return;
 
-    setReimportando(true);
     setMensagem(null);
 
     try {
-      const total = await reimportarCatalogoEmbutido();
-      const novaData = await obterConfiguracao('catalogo_atualizado_em', '');
+      const resultado = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+
+      if (resultado.canceled || !resultado.assets?.length) {
+        return;
+      }
+
+      const arquivo = resultado.assets[0];
+
+      setReimportando(true);
+
+      const conteudo = await FileSystem.readAsStringAsync(arquivo.uri);
+      const total = await importarCatalogoExterno(conteudo);
+
+      const [novaData, novoTotal] = await Promise.all([
+        obterConfiguracao('catalogo_atualizado_em', ''),
+        contarProdutos(),
+      ]);
+
       setCatalogoAtualizadoEm(novaData || null);
-      setTotalProdutos(await contarProdutos());
-      setMensagem(`Catálogo reimportado: ${total} produtos.`);
+      setTotalProdutos(novoTotal);
+      setMensagem(`Catálogo importado: ${total} produtos.`);
     } catch (error) {
-      console.error('Erro ao reimportar catálogo:', error);
-      setMensagem('Não foi possível reimportar o catálogo.');
+      const msg =
+        error instanceof Error ? error.message : 'Erro ao importar catálogo.';
+      setMensagem(msg);
     } finally {
       setReimportando(false);
     }
@@ -485,18 +504,18 @@ export default function ConfiguracoesScreen() {
           <Pressable
             style={[styles.actionCard, reimportando && styles.cardDisabled]}
             onPress={() => {
-              void reimportarCatalogo();
+              void importarCatalogoDoDispositivo();
             }}
             disabled={reimportando}
           >
             <View style={styles.actionInfo}>
               <Text style={styles.actionTitle}>
-                Reimportar catálogo embutido
+                Importar catálogo do dispositivo
               </Text>
               <Text style={styles.actionText}>
-                Resincroniza os produtos do catálogo original.
-                Produtos manuais e não identificados não são
-                afetados.
+                Escolha um arquivo .json do Android para
+                substituir o catálogo atual. Produtos manuais
+                e não identificados não são afetados.
               </Text>
             </View>
 
