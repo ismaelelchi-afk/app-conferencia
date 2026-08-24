@@ -1953,12 +1953,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
 
-  editBarcode: {
-    fontSize: 11,
-    color: '#98A2B3',
-    textAlign: 'center',
-  },
-
   barcodeBox: {
     paddingVertical: 10,
     paddingHorizontal: 14,

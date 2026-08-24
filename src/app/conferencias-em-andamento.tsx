@@ -4,9 +4,8 @@
 // permitindo continuar de onde parou.
 // ============================================================
 
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { useFocusEffect } from 'expo-router';
 import {
   ActivityIndicator,
   TextInput,
@@ -18,8 +17,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { listarConferenciasPorStatus } from '@/database/database';
-import { atualizarNomeConferencia } from '@/database/database';
+import {
+  atualizarNomeConferencia,
+  listarConferenciasPorStatus,
+} from '@/database/database';
 import type { ConferenciaComContagem } from '@/database/database';
 
 // ============================================================
