@@ -784,12 +784,20 @@ export async function completarProdutoDesconhecido(
         nome = ?,
         marca = ?,
         categoria = ?,
+        modelo = ?,
+        unidade = ?,
+        estoque = ?,
+        url = ?,
         origem = 'manual'
       WHERE codigo_interno = ?;
     `,
     dados.nome,
     dados.marca ?? null,
     dados.categoria ?? null,
+    dados.modelo ?? null,
+    dados.unidade ?? null,
+    dados.estoque ?? 0,
+    dados.url ?? null,
     codigoInterno,
   );
 }

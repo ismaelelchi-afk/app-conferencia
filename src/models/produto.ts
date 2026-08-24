@@ -117,4 +117,8 @@ export type DadosProdutoRapido = {
   nome: string;
   marca?: string;
   categoria?: string;
+  modelo?: string;
+  unidade?: string;
+  estoque?: number;
+  url?: string;
 };

@@ -525,6 +525,10 @@ function abrirEdicao(item: LeituraConferencia) {
                   nome: dados.nome,
                   marca: dados.marca,
                   categoria: dados.categoria,
+                  modelo: dados.modelo,
+                  unidade: dados.unidade ?? item.produto.unidade,
+                  estoque: dados.estoque ?? item.produto.estoque,
+                  url: dados.url,
                   origem: 'manual',
                 },
               }
@@ -1151,19 +1155,28 @@ function ModalEdicaoItem({
   const [nome, setNome] = useState(
     item.status === 'desconhecido' ? '' : item.produto.nome,
   );
-
   const [marca, setMarca] = useState(item.produto.marca ?? '');
   const [categoria, setCategoria] = useState(item.produto.categoria ?? '');
+  const [modelo, setModelo] = useState(item.produto.modelo ?? '');
+  const [unidade, setUnidade] = useState(item.produto.unidade ?? 'UN');
+  const [estoque, setEstoque] = useState(String(item.produto.estoque ?? 0));
+  const [url, setUrl] = useState(item.produto.url ?? '');
 
   const ehDesconhecido = item.status === 'desconhecido';
+  const nomeValido = nome.trim().length >= 3;
 
   return (
     <View style={styles.overlay}>
       <View style={styles.editCard}>
         <ScrollView showsVerticalScrollIndicator={false}>
-          <Text style={styles.editBarcode}>
-            {item.produto.codigoBarras || 'sem código de barras'}
-          </Text>
+
+          {/* Código de barras — somente leitura */}
+          <View style={styles.barcodeBox}>
+            <Text style={styles.barcodeBoxLabel}>CÓDIGO DE BARRAS</Text>
+            <Text style={styles.barcodeBoxValue}>
+              {item.produto.codigoBarras || 'sem código de barras'}
+            </Text>
+          </View>
 
           {ehDesconhecido ? (
             <>
@@ -1172,7 +1185,7 @@ function ModalEdicaoItem({
               </Text>
 
               <Text style={styles.editSubtitle}>
-                Preencha o nome para salvar este
+                Preencha os dados para salvar este
                 código como um produto novo.
               </Text>
 
@@ -1181,7 +1194,7 @@ function ModalEdicaoItem({
                 style={styles.editInput}
                 value={nome}
                 onChangeText={setNome}
-                placeholder="Nome do produto"
+                placeholder="Nome do produto (mín. 3 caracteres)"
                 placeholderTextColor="#98A2B3"
               />
 
@@ -1203,17 +1216,66 @@ function ModalEdicaoItem({
                 placeholderTextColor="#98A2B3"
               />
 
+              <Text style={styles.editLabel}>MODELO</Text>
+              <TextInput
+                style={styles.editInput}
+                value={modelo}
+                onChangeText={setModelo}
+                placeholder="Opcional"
+                placeholderTextColor="#98A2B3"
+              />
+
+              <View style={styles.editRow}>
+                <View style={styles.editRowItem}>
+                  <Text style={styles.editLabel}>UNIDADE</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={unidade}
+                    onChangeText={(v) => setUnidade(v.toUpperCase().slice(0, 8))}
+                    placeholder="UN"
+                    placeholderTextColor="#98A2B3"
+                    autoCapitalize="characters"
+                  />
+                </View>
+                <View style={styles.editRowItem}>
+                  <Text style={styles.editLabel}>ESTOQUE</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={estoque}
+                    onChangeText={setEstoque}
+                    placeholder="0"
+                    placeholderTextColor="#98A2B3"
+                    keyboardType="number-pad"
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.editLabel}>URL / LINK</Text>
+              <TextInput
+                style={styles.editInput}
+                value={url}
+                onChangeText={setUrl}
+                placeholder="Opcional"
+                placeholderTextColor="#98A2B3"
+                keyboardType="url"
+                autoCapitalize="none"
+              />
+
               <Pressable
                 style={[
                   styles.editSaveButton,
-                  !nome.trim() && styles.editButtonDisabled,
+                  !nomeValido && styles.editButtonDisabled,
                 ]}
-                disabled={!nome.trim()}
+                disabled={!nomeValido}
                 onPress={() =>
                   onSalvarProdutoNovo({
                     nome: nome.trim(),
                     marca: marca.trim() || undefined,
                     categoria: categoria.trim() || undefined,
+                    modelo: modelo.trim() || undefined,
+                    unidade: unidade.trim() || 'UN',
+                    estoque: Number(estoque) || 0,
+                    url: url.trim() || undefined,
                   })
                 }
               >
@@ -1875,6 +1937,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#98A2B3',
     textAlign: 'center',
+  },
+
+  barcodeBox: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#F2F4F7',
+    marginBottom: 4,
+    alignItems: 'center',
+  },
+
+  barcodeBoxLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#98A2B3',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+
+  barcodeBoxValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#344054',
+  },
+
+  editRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  editRowItem: {
+    flex: 1,
   },
 
   editTitle: {
