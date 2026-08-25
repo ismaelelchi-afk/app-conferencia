@@ -1015,6 +1015,14 @@ export async function completarProdutoDesconhecido(
       );
     }
 
+    // Atualiza status de 'desconhecido' para 'novo' em todas as conferências
+    await db.runAsync(
+      `UPDATE leituras_conferencia
+       SET status = 'novo'
+       WHERE codigo_interno = ? AND status = 'desconhecido';`,
+      novoCodigoInterno,
+    );
+
     await db.runAsync(
       `UPDATE produtos
        SET
@@ -1409,7 +1417,9 @@ export async function obterLeiturasConferencia(
     quantidade: item.quantidade,
     primeiraLeitura: item.primeira_leitura,
     ultimaLeitura: item.ultima_leitura,
-    status: item.status,
+    status: item.status === 'desconhecido' && item.origem !== 'desconhecido'
+      ? 'novo'
+      : item.status,
     statusRevisao: item.status_revisao,
   }));
 }
