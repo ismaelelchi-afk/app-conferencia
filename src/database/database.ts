@@ -4,6 +4,7 @@
 // ============================================================
 
 import * as SQLite from 'expo-sqlite';
+import * as XLSX from 'xlsx';
 
 import type {
   Conferencia,
@@ -727,6 +728,74 @@ export async function importarCatalogoExterno(
   await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
 
   return lista.length;
+}
+
+// ============================================================
+// IMPORTAR CATÁLOGO DE EXCEL (.xlsx)
+// Espera planilha com colunas "codigo de barras" e "nome"
+// (case-insensitive, qualquer ordem).
+// ============================================================
+
+export async function importarCatalogoExcel(base64: string): Promise<number> {
+  const workbook = XLSX.read(base64, { type: 'base64' });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) throw new Error('Arquivo Excel vazio.');
+
+  const sheet = workbook.Sheets[sheetName];
+  const linhas = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+
+  if (linhas.length < 2) throw new Error('Planilha sem dados.');
+
+  const cabecalho = linhas[0].map((c) =>
+    String(c ?? '').toLowerCase().trim(),
+  );
+
+  function acharColuna(...nomes: string[]): number {
+    for (const nome of nomes) {
+      const idx = cabecalho.findIndex((h) => h.includes(nome));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  }
+
+  const colBarras = acharColuna('codigo de barras', 'código de barras', 'barras', 'barcode', 'ean', 'codigo_barras');
+  const colNome   = acharColuna('nome', 'name', 'produto', 'descripcion', 'descripción', 'descricao');
+
+  if (colBarras < 0) throw new Error('Coluna de código de barras não encontrada.');
+  if (colNome < 0)   throw new Error('Coluna de nome não encontrada.');
+
+  const produtos: { codigoBarras: string; nome: string }[] = [];
+
+  for (let i = 1; i < linhas.length; i++) {
+    const linha = linhas[i];
+    const barras = String(linha[colBarras] ?? '').trim();
+    const nome   = String(linha[colNome]   ?? '').trim();
+    if (!barras || !nome) continue;
+    produtos.push({ codigoBarras: barras, nome });
+  }
+
+  if (produtos.length === 0) throw new Error('Nenhum produto válido encontrado.');
+
+  const db = await obterDatabase();
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM produtos WHERE origem = 'catalogo';`);
+
+    for (const p of produtos) {
+      await db.runAsync(
+        `INSERT OR IGNORE INTO produtos
+           (codigo_interno, codigo_barras, nome, tipo_produto, origem)
+         VALUES (?, ?, ?, 'normal', 'catalogo');`,
+        p.codigoBarras,
+        p.codigoBarras,
+        p.nome,
+      );
+    }
+  });
+
+  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
+
+  return produtos.length;
 }
 
 // ============================================================

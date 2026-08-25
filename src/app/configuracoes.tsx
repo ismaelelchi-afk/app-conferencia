@@ -22,6 +22,7 @@ import {
   contarProdutosPorOrigem,
   exportarCatalogo,
   importarCatalogoExterno,
+  importarCatalogoExcel,
   obterConfiguracao,
   obterDadosExportacaoHistorico,
   resetarBancoDeDados,
@@ -48,6 +49,7 @@ export default function ConfiguracoesScreen() {
   const [produtosParaRevisar, setProdutosParaRevisar] = useState(0);
 
   const [reimportando, setReimportando] = useState(false);
+  const [importandoExcel, setImportandoExcel] = useState(false);
   const [exportandoCatalogo, setExportandoCatalogo] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [apagando, setApagando] = useState(false);
@@ -187,6 +189,47 @@ export default function ConfiguracoesScreen() {
       setMensagem(msg);
     } finally {
       setReimportando(false);
+    }
+  }
+
+  async function importarCatalogoDeExcel() {
+    if (importandoExcel) return;
+
+    setMensagem(null);
+
+    try {
+      const resultado = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (resultado.canceled || !resultado.assets?.length) return;
+
+      setImportandoExcel(true);
+
+      const arquivo = resultado.assets[0];
+      const base64 = await FileSystem.readAsStringAsync(arquivo.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const total = await importarCatalogoExcel(base64);
+
+      const [novaData, novoTotal] = await Promise.all([
+        obterConfiguracao('catalogo_atualizado_em', ''),
+        contarProdutos(),
+      ]);
+
+      setCatalogoAtualizadoEm(novaData || null);
+      setTotalProdutos(novoTotal);
+      setMensagem(`Excel importado: ${total} produtos.`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao importar Excel.';
+      setMensagem(msg);
+    } finally {
+      setImportandoExcel(false);
     }
   }
 
@@ -518,6 +561,28 @@ export default function ConfiguracoesScreen() {
 
           {/* DADOS */}
           <Text style={styles.sectionTitle}>🗄️  DADOS</Text>
+
+          <Pressable
+            style={[styles.actionCard, importandoExcel && styles.cardDisabled]}
+            onPress={() => { void importarCatalogoDeExcel(); }}
+            disabled={importandoExcel}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>
+                Importar catálogo do Excel
+              </Text>
+              <Text style={styles.actionText}>
+                Escolha um arquivo .xlsx com colunas
+                "codigo de barras" e "nome".
+              </Text>
+            </View>
+
+            {importandoExcel ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={styles.actionArrow}>›</Text>
+            )}
+          </Pressable>
 
           <Pressable
             style={[styles.actionCard, reimportando && styles.cardDisabled]}
