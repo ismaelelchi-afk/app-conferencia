@@ -216,12 +216,14 @@ function ModalGerenciarProduto({
 }: ModalGerenciarProdutoProps) {
   const ehDesconhecido = produto.origem === 'desconhecido';
 
+  const [codigoInterno, setCodigoInterno] = useState(produto.codigoInterno);
   const [nome, setNome] = useState(
     ehDesconhecido ? '' : produto.nome,
   );
   const [marca, setMarca] = useState(produto.marca ?? '');
   const [categoria, setCategoria] = useState(produto.categoria ?? '');
-  const [codigoBarras, setCodigoBarras] = useState(produto.codigoBarras);
+  const [modelo, setModelo] = useState(produto.modelo ?? '');
+  const [descricao, setDescricao] = useState(produto.descricao ?? '');
 
   const [salvando, setSalvando] = useState(false);
   const [removendo, setRemovendo] = useState(false);
@@ -246,33 +248,41 @@ function ModalGerenciarProduto({
     try {
       if (ehDesconhecido) {
         const dados: DadosProdutoRapido = {
+          codigoInterno: codigoInterno.trim() || undefined,
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
+          modelo: modelo.trim() || undefined,
+          descricao: descricao.trim() || undefined,
         };
 
-        await completarProdutoDesconhecido(
+        const novoCodigoInterno = await completarProdutoDesconhecido(
           produto.codigoInterno,
           dados,
         );
 
         onAtualizado({
           ...produto,
+          codigoInterno: novoCodigoInterno,
           nome: dados.nome,
           marca: dados.marca,
           categoria: dados.categoria,
+          modelo: dados.modelo,
+          descricao: dados.descricao,
           origem: 'manual',
         });
       } else {
         const produtoAtualizado: Produto = {
           ...produto,
+          codigoInterno: codigoInterno.trim() || produto.codigoInterno,
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
-          codigoBarras: codigoBarras.trim(),
+          modelo: modelo.trim() || undefined,
+          descricao: descricao.trim() || undefined,
         };
 
-        const sucesso = await atualizarProduto(produtoAtualizado);
+        const sucesso = await atualizarProduto(produtoAtualizado, produto.codigoInterno);
 
         if (!sucesso) {
           setErro('Não foi possível salvar: produto não encontrado.');
@@ -318,9 +328,13 @@ function ModalGerenciarProduto({
     <View style={styles.overlay}>
       <View style={styles.editCard}>
         <ScrollView showsVerticalScrollIndicator={false}>
-          <Text style={styles.editBarcode}>
-            {produto.codigoInterno}
-          </Text>
+          {/* Código de barras — imutável */}
+          <View style={styles.barcodeBox}>
+            <Text style={styles.barcodeLabel}>CÓDIGO DE BARRAS</Text>
+            <Text selectable style={styles.barcodeValue}>
+              {produto.codigoBarras || 'sem código de barras'}
+            </Text>
+          </View>
 
           <Text style={styles.editTitle}>
             {ehDesconhecido
@@ -334,6 +348,17 @@ function ModalGerenciarProduto({
             </View>
           )}
 
+          <Text style={styles.editLabel}>CÓDIGO INTERNO</Text>
+          <TextInput
+            style={styles.editInput}
+            value={codigoInterno}
+            onChangeText={setCodigoInterno}
+            placeholder="Código interno"
+            placeholderTextColor="#98A2B3"
+            autoCapitalize="characters"
+            editable={!salvando && !removendo}
+          />
+
           <Text style={styles.editLabel}>NOME *</Text>
           <TextInput
             style={styles.editInput}
@@ -341,17 +366,6 @@ function ModalGerenciarProduto({
             onChangeText={setNome}
             placeholder="Nome do produto"
             placeholderTextColor="#98A2B3"
-            editable={!salvando && !removendo}
-          />
-
-          <Text style={styles.editLabel}>CÓDIGO DE BARRAS</Text>
-          <TextInput
-            style={styles.editInput}
-            value={codigoBarras}
-            onChangeText={setCodigoBarras}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            keyboardType="number-pad"
             editable={!salvando && !removendo}
           />
 
@@ -375,6 +389,28 @@ function ModalGerenciarProduto({
             editable={!salvando && !removendo}
           />
 
+          <Text style={styles.editLabel}>MODELO</Text>
+          <TextInput
+            style={styles.editInput}
+            value={modelo}
+            onChangeText={setModelo}
+            placeholder="Opcional"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !removendo}
+          />
+
+          <Text style={styles.editLabel}>DESCRIÇÃO</Text>
+          <TextInput
+            style={[styles.editInput, styles.editInputMultiline]}
+            value={descricao}
+            onChangeText={setDescricao}
+            placeholder="Opcional"
+            placeholderTextColor="#98A2B3"
+            multiline
+            numberOfLines={3}
+            editable={!salvando && !removendo}
+          />
+
           <Pressable
             style={[
               styles.saveButton,
@@ -393,6 +429,19 @@ function ModalGerenciarProduto({
                 SALVAR
               </Text>
             )}
+          </Pressable>
+
+          <Pressable
+            style={[styles.editFullButton, (salvando || removendo) && styles.buttonDisabled]}
+            onPress={() => {
+              onFechar();
+              router.push(
+                `/cadastrar-produto?codigoInterno=${encodeURIComponent(produto.codigoInterno)}`,
+              );
+            }}
+            disabled={salvando || removendo}
+          >
+            <Text style={styles.editFullButtonText}>EDITAR COMPLETO</Text>
           </Pressable>
 
           <Pressable
@@ -587,10 +636,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
 
-  editBarcode: {
-    fontSize: 11,
+  barcodeBox: {
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F4F7',
+    marginBottom: 4,
+    alignItems: 'center',
+  },
+
+  barcodeLabel: {
+    fontSize: 9,
+    fontWeight: '800',
     color: '#98A2B3',
-    textAlign: 'center',
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+
+  barcodeValue: {
+    fontSize: 13,
+    color: '#475467',
+    fontWeight: '600',
+  },
+
+  editInputMultiline: {
+    height: 80,
+    paddingTop: 12,
+    textAlignVertical: 'top',
   },
 
   editTitle: {
@@ -650,6 +722,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+
+  editFullButton: {
+    height: 48,
+    marginTop: 10,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#208AEF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  editFullButtonText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#208AEF',
   },
 
   removeButton: {

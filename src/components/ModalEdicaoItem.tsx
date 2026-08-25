@@ -141,7 +141,7 @@ export function ModalEdicaoItem({
           {/* Código de barras */}
           <View style={styles.barcodeBox}>
             <Text style={styles.barcodeBoxLabel}>CÓDIGO DE BARRAS</Text>
-            <Text style={styles.barcodeBoxValue}>
+            <Text selectable style={styles.barcodeBoxValue}>
               {item.produto.codigoBarras || 'sem código de barras'}
             </Text>
           </View>

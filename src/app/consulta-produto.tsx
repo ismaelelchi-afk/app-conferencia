@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -65,16 +64,6 @@ export default function ConsultaProdutoScreen() {
         (p.marca && p.marca.toLowerCase().includes(t)),
     );
   }, [termo, todos]);
-
-  async function abrirLink(url: string) {
-    try {
-      if (await Linking.canOpenURL(url)) {
-        await Linking.openURL(url);
-      }
-    } catch (error) {
-      console.error('Erro ao abrir link:', error);
-    }
-  }
 
   function handleProdutoRemovido(codigoInterno: string) {
     setTodos((lista) =>
@@ -200,7 +189,6 @@ export default function ConsultaProdutoScreen() {
         <DetalheProdutoModal
           produto={produtoSelecionado}
           onFechar={() => setProdutoSelecionado(null)}
-          onAbrirLink={abrirLink}
           onProdutoRemovido={handleProdutoRemovido}
         />
       )}
@@ -215,23 +203,18 @@ export default function ConsultaProdutoScreen() {
 type DetalheProdutoModalProps = {
   produto: Produto;
   onFechar: () => void;
-  onAbrirLink: (url: string) => void;
   onProdutoRemovido: (codigoInterno: string) => void;
 };
 
 function DetalheProdutoModal({
   produto,
   onFechar,
-  onAbrirLink,
   onProdutoRemovido,
 }: DetalheProdutoModalProps) {
   const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
-  const especificacoes = produto.especificacoes
-    ? Object.entries(produto.especificacoes)
-    : [];
 
   async function confirmarExclusao() {
     if (excluindo) return;
@@ -307,7 +290,7 @@ function DetalheProdutoModal({
 
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Código de barras</Text>
-              <Text style={styles.detailValue}>
+              <Text selectable style={styles.detailValue}>
                 {produto.codigoBarras || 'não informado'}
               </Text>
             </View>
@@ -333,22 +316,10 @@ function DetalheProdutoModal({
               </View>
             )}
 
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Unidade</Text>
-              <Text style={styles.detailValue}>{produto.unidade || 'UN'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Estoque</Text>
-              <Text style={styles.detailValue}>{produto.estoque ?? 0}</Text>
-            </View>
-
-            {produto.url && (
+            {produto.descricao && (
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>URL</Text>
-                <Text style={styles.detailValue} numberOfLines={1}>
-                  {produto.url}
-                </Text>
+                <Text style={styles.detailLabel}>Descrição</Text>
+                <Text style={styles.detailValue}>{produto.descricao}</Text>
               </View>
             )}
 
@@ -385,33 +356,6 @@ function DetalheProdutoModal({
             >
               <Text style={styles.deleteButtonText}>🗑️  EXCLUIR PRODUTO</Text>
             </Pressable>
-
-            {produto.url && (
-              <Pressable
-                style={styles.linkButton}
-                onPress={() => onAbrirLink(produto.url!)}
-              >
-                <Text style={styles.linkButtonText}>
-                  🔗  ABRIR PÁGINA DO PRODUTO
-                </Text>
-              </Pressable>
-            )}
-
-            {especificacoes.length > 0 && (
-              <>
-                <Text style={styles.detailSectionTitle}>
-                  ESPECIFICAÇÕES TÉCNICAS
-                </Text>
-                <View style={styles.specsCard}>
-                  {especificacoes.map(([chave, valor]) => (
-                    <View key={chave} style={styles.specRow}>
-                      <Text style={styles.specLabel}>{chave}</Text>
-                      <Text style={styles.specValue}>{valor}</Text>
-                    </View>
-                  ))}
-                </View>
-              </>
-            )}
           </ScrollView>
         )}
       </View>
@@ -716,56 +660,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#F04438',
-  },
-
-  linkButton: {
-    height: 48,
-    marginTop: 12,
-    borderRadius: 13,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  linkButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-
-  detailSectionTitle: {
-    marginTop: 22,
-    marginBottom: 8,
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#667085',
-    letterSpacing: 0.6,
-  },
-
-  specsCard: {
-    borderRadius: 13,
-    backgroundColor: '#F9FAFB',
-    padding: 4,
-    marginBottom: 10,
-  },
-
-  specRow: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEF1F4',
-  },
-
-  specLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#98A2B3',
-  },
-
-  specValue: {
-    marginTop: 2,
-    fontSize: 13,
-    color: '#344054',
   },
 
   // Confirmação de exclusão
