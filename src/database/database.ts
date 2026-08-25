@@ -1404,45 +1404,15 @@ export async function listarProdutosNaoCatalogo(): Promise<Produto[]> {
 // (velocidade de leitura, etc.) permanecem.
 // ============================================================
 
-export async function resetarBancoDeDados(): Promise<number> {
+export async function resetarBancoDeDados(): Promise<void> {
   const db = await obterDatabase();
-
-  const lista = produtosRamsons as ProdutoImportacao[];
 
   await db.withTransactionAsync(async () => {
     await db.runAsync(`DELETE FROM leituras_conferencia;`);
     await db.runAsync(`DELETE FROM conferencias;`);
     await db.runAsync(`DELETE FROM produtos;`);
-
-    for (const produto of lista) {
-      await db.runAsync(
-        `
-          INSERT OR IGNORE INTO produtos (
-            codigo_interno,
-            codigo_barras,
-            nome,
-            marca,
-            categoria,
-            modelo,
-            descricao,
-            origem
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
-        `,
-        produto.codigoInterno,
-        produto.codigoBarras || null,
-        produto.nome,
-        produto.marca ?? null,
-        produto.categoria ?? null,
-        produto.modelo ?? null,
-        produto.descricao ?? null,
-      );
-    }
+    await db.runAsync(`DELETE FROM configuracoes;`);
   });
-
-  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
-
-  return lista.length;
 }
 
 

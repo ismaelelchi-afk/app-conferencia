@@ -287,24 +287,19 @@ export default function ConfiguracoesScreen() {
     setMensagem(null);
 
     try {
-      const total = await resetarBancoDeDados();
-      setMensagem(
-        `Banco de dados resetado. ${total} produtos do catálogo restaurados.`,
-      );
+      await resetarBancoDeDados();
       setMostrarConfirmacaoResetar(false);
-
-      const [contagem, novoTotal, novaData] = await Promise.all([
-        contarProdutosPorOrigem(),
-        contarProdutos(),
-        obterConfiguracao('catalogo_atualizado_em', ''),
-      ]);
-
-      setProdutosParaRevisar(contagem.manual + contagem.desconhecido);
-      setTotalProdutos(novoTotal);
-      setCatalogoAtualizadoEm(novaData || null);
+      setMensagem('Todos os dados foram apagados.');
+      setTotalProdutos(0);
+      setProdutosParaRevisar(0);
+      setCatalogoAtualizadoEm(null);
+      setVelocidadeTexto(String(VELOCIDADE_PADRAO_MS));
+      setModoLeitura('automatico');
+      setSomAtivado(true);
+      setVibrarAtivado(true);
     } catch (error) {
       console.error('Erro ao resetar banco de dados:', error);
-      setMensagem('Não foi possível resetar o banco de dados.');
+      setMensagem('Não foi possível apagar os dados.');
     } finally {
       setResetando(false);
     }
@@ -624,12 +619,11 @@ export default function ConfiguracoesScreen() {
           >
             <View style={styles.actionInfo}>
               <Text style={styles.dangerTitle}>
-                Resetar banco de dados
+                Apagar todos os dados
               </Text>
               <Text style={styles.actionText}>
-                Apaga TODAS as conferências (em andamento e
-                finalizadas) e produtos manuais/não
-                identificados. Reimporta o catálogo do zero.
+                Apaga TUDO: conferências, produtos, catálogo
+                e configurações. O app fica como novo.
               </Text>
             </View>
 
@@ -724,15 +718,14 @@ export default function ConfiguracoesScreen() {
             <Text style={styles.confirmIcon}>⚠️</Text>
 
             <Text style={styles.confirmTitle}>
-              RESETAR BANCO DE DADOS?
+              APAGAR TODOS OS DADOS?
             </Text>
 
             <Text style={styles.confirmText}>
-              Isso apaga TODAS as conferências (mesmo as em
-              andamento) e todos os produtos manuais ou não
-              identificados. O catálogo original será
-              reimportado do zero. Esta ação não pode ser
-              desfeita.
+              Isso apaga TUDO: conferências, produtos,
+              catálogo e configurações. O app ficará
+              completamente vazio. Esta ação não pode
+              ser desfeita.
             </Text>
 
             <Pressable
