@@ -705,9 +705,11 @@ export async function importarCatalogoExterno(
             categoria,
             modelo,
             descricao,
+            tipo_produto,
+            codigo_par,
             origem
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
         `,
         produto.codigoInterno,
         produto.codigoBarras || null,
@@ -716,6 +718,8 @@ export async function importarCatalogoExterno(
         produto.categoria ?? null,
         produto.modelo ?? null,
         produto.descricao ?? null,
+        produto.tipoProduto ?? 'normal',
+        produto.codigoPar ?? null,
       );
     }
   });
@@ -742,6 +746,8 @@ export async function exportarCatalogo(): Promise<string> {
     categoria: string | null;
     modelo: string | null;
     descricao: string | null;
+    tipo_produto: string;
+    codigo_par: string | null;
   }>(`
     SELECT
       codigo_interno,
@@ -750,7 +756,9 @@ export async function exportarCatalogo(): Promise<string> {
       marca,
       categoria,
       modelo,
-      descricao
+      descricao,
+      tipo_produto,
+      codigo_par
     FROM produtos
     WHERE ativo = 1
     ORDER BY nome COLLATE NOCASE ASC;
@@ -764,6 +772,8 @@ export async function exportarCatalogo(): Promise<string> {
     categoria: r.categoria,
     modelo: r.modelo,
     descricao: r.descricao,
+    tipoProduto: r.tipo_produto !== 'normal' ? r.tipo_produto : undefined,
+    codigoPar: r.codigo_par,
   }));
 
   return JSON.stringify(lista, null, 2);

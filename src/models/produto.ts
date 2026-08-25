@@ -39,6 +39,8 @@ export type ProdutoImportacao = {
   categoria?: string | null;
   modelo?: string | null;
   descricao?: string | null;
+  tipoProduto?: string | null;
+  codigoPar?: string | null;
 };
 
 // ============================================================
