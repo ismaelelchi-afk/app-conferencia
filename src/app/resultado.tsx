@@ -402,6 +402,82 @@ export default function ResultadoScreen() {
     }
   }
 
+  async function handleParear(
+    codigoInternoSocio: string,
+    codigoPar: string,
+  ): Promise<string | null> {
+    if (!itemEditando) return null;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, codigoPar },
+        itemEditando.produto.codigoInterno,
+      );
+
+      const socio = leituras.find(
+        (it) => it.produto.codigoInterno === codigoInternoSocio,
+      );
+      if (socio) {
+        await atualizarProduto(
+          { ...socio.produto, codigoPar },
+          socio.produto.codigoInterno,
+        );
+      }
+
+      setLeituras((lista) =>
+        lista.map((it) =>
+          it.produto.codigoInterno === itemEditando.produto.codigoInterno ||
+          it.produto.codigoInterno === codigoInternoSocio
+            ? { ...it, produto: { ...it.produto, codigoPar } }
+            : it,
+        ),
+      );
+
+      return null;
+    } catch {
+      return 'Não foi possível parear.';
+    }
+  }
+
+  async function handleDesparear(): Promise<string | null> {
+    if (!itemEditando) return null;
+
+    const codigoParAtual = itemEditando.produto.codigoPar;
+    if (!codigoParAtual) return null;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, codigoPar: undefined },
+        itemEditando.produto.codigoInterno,
+      );
+
+      const socio = leituras.find(
+        (it) =>
+          it.produto.codigoPar === codigoParAtual &&
+          it.produto.codigoInterno !== itemEditando.produto.codigoInterno,
+      );
+      if (socio) {
+        await atualizarProduto(
+          { ...socio.produto, codigoPar: undefined },
+          socio.produto.codigoInterno,
+        );
+      }
+
+      setLeituras((lista) =>
+        lista.map((it) =>
+          it.produto.codigoInterno === itemEditando.produto.codigoInterno ||
+          it.produto.codigoInterno === socio?.produto.codigoInterno
+            ? { ...it, produto: { ...it.produto, codigoPar: undefined } }
+            : it,
+        ),
+      );
+
+      return null;
+    } catch {
+      return 'Não foi possível desparear.';
+    }
+  }
+
   // ==========================================================
   // CONFIRMAR FINALIZAÇÃO
   // ==========================================================
@@ -870,6 +946,9 @@ export default function ResultadoScreen() {
           onSalvarProdutoNovo={salvarComoProdutoNovo}
           onAtualizarTipo={atualizarTipo}
           onSalvarDadosProduto={salvarDadosProduto}
+          itensConferencia={leituras}
+          onParear={handleParear}
+          onDesparear={handleDesparear}
         />
       )}
 

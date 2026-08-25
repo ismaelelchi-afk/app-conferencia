@@ -30,6 +30,9 @@ type Props = {
   onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
   onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
   onSalvarDadosProduto?: (dados: DadosProduto) => Promise<string | null>;
+  itensConferencia?: LeituraConferencia[];
+  onParear?: (codigoInternoSocio: string, codigoPar: string) => Promise<string | null>;
+  onDesparear?: () => Promise<string | null>;
 };
 
 const OPCOES_TIPO: { valor: TipoProduto; label: string }[] = [
@@ -46,6 +49,9 @@ export function ModalEdicaoItem({
   onSalvarProdutoNovo,
   onAtualizarTipo,
   onSalvarDadosProduto,
+  itensConferencia,
+  onParear,
+  onDesparear,
 }: Props) {
   const [quantidadeTexto, setQuantidadeTexto] = useState(
     String(item.quantidade),
@@ -70,11 +76,64 @@ export function ModalEdicaoItem({
     item.produto.tipoProduto ?? 'normal',
   );
   const [codigoPar, setCodigoPar] = useState(item.produto.codigoPar ?? '');
+
+  // Pareamento
+  const [parceiroCodigo, setParceiroCodigo] = useState<string | null>(
+    item.produto.codigoPar ?? null,
+  );
+  const [pareando, setPareando] = useState(false);
+  const [despareando, setDespareando] = useState(false);
+  const [erroPareamento, setErroPareamento] = useState<string | null>(null);
   const [salvandoTipo, setSalvandoTipo] = useState(false);
   const [erroTipo, setErroTipo] = useState<string | null>(null);
 
   const ehDesconhecido = item.status === 'desconhecido';
   const nomeValido = nome.trim().length >= 3;
+
+  const tipoOposto = tipoLocal === 'evaporadora' ? 'condensadora' : 'evaporadora';
+  const parceirosDisponiveis = (itensConferencia ?? []).filter(
+    (it) =>
+      it.produto.codigoInterno !== item.produto.codigoInterno &&
+      it.produto.tipoProduto === tipoOposto &&
+      !it.produto.codigoPar,
+  );
+  const parceiroAtual = parceiroCodigo
+    ? (itensConferencia ?? []).find(
+        (it) =>
+          it.produto.codigoPar === parceiroCodigo &&
+          it.produto.codigoInterno !== item.produto.codigoInterno,
+      )
+    : undefined;
+
+  async function handleParear(codigoInternoSocio: string) {
+    if (!onParear || pareando) return;
+    const novoCodigo =
+      tipoLocal === 'evaporadora'
+        ? `PAR-${item.produto.codigoInterno}`
+        : `PAR-${codigoInternoSocio}`;
+    setPareando(true);
+    setErroPareamento(null);
+    const erro = await onParear(codigoInternoSocio, novoCodigo);
+    if (erro) {
+      setErroPareamento(erro);
+    } else {
+      setParceiroCodigo(novoCodigo);
+    }
+    setPareando(false);
+  }
+
+  async function handleDesparear() {
+    if (!onDesparear || despareando) return;
+    setDespareando(true);
+    setErroPareamento(null);
+    const erro = await onDesparear();
+    if (erro) {
+      setErroPareamento(erro);
+    } else {
+      setParceiroCodigo(null);
+    }
+    setDespareando(false);
+  }
 
   async function handleSelecionarTipo(tipo: TipoProduto) {
     if (!onAtualizarTipo || salvandoTipo || tipo === tipoLocal) return;
@@ -355,12 +414,57 @@ export function ModalEdicaoItem({
                 </>
               )}
 
-              {/* Código do conjunto (read-only) */}
-              {(tipoLocal === 'evaporadora' || tipoLocal === 'condensadora') && item.produto.codigoPar && (
-                <View style={styles.barcodeBox}>
-                  <Text style={styles.barcodeBoxLabel}>CÓDIGO DO CONJUNTO</Text>
-                  <Text selectable style={styles.barcodeBoxValue}>{item.produto.codigoPar}</Text>
-                </View>
+              {/* Pareamento */}
+              {(tipoLocal === 'evaporadora' || tipoLocal === 'condensadora') && onParear && (
+                <>
+                  <Text style={styles.editLabel}>
+                    {tipoLocal === 'evaporadora' ? 'CONDENSADORA PARCEIRA' : 'EVAPORADORA PARCEIRA'}
+                  </Text>
+
+                  {parceiroCodigo ? (
+                    <View style={styles.parceiroBox}>
+                      <View style={styles.parceiroInfo}>
+                        <Text style={styles.parceiroNome} numberOfLines={1}>
+                          {parceiroAtual ? parceiroAtual.produto.nome : '—'}
+                        </Text>
+                        <Text style={styles.parceiroCodigo}>{parceiroCodigo}</Text>
+                      </View>
+                      <Pressable
+                        style={[styles.desparerarBtn, despareando && styles.editButtonDisabled]}
+                        onPress={() => { void handleDesparear(); }}
+                        disabled={despareando}
+                      >
+                        <Text style={styles.desparerarBtnText}>DESPAREAR</Text>
+                      </Pressable>
+                    </View>
+                  ) : parceirosDisponiveis.length > 0 ? (
+                    <View style={styles.parceirosLista}>
+                      {parceirosDisponiveis.map((p) => (
+                        <Pressable
+                          key={p.produto.codigoInterno}
+                          style={[styles.parceiroOpcao, pareando && styles.editButtonDisabled]}
+                          onPress={() => { void handleParear(p.produto.codigoInterno); }}
+                          disabled={pareando}
+                        >
+                          <Text style={styles.parceiroOpcaoNome} numberOfLines={1}>
+                            {p.produto.nome}
+                          </Text>
+                          <Text style={styles.parceiroOpcaoCodigo}>
+                            {p.produto.codigoInterno}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={styles.parceiroVazio}>
+                      Nenhuma {tipoOposto} sem par na conferência
+                    </Text>
+                  )}
+
+                  {erroPareamento ? (
+                    <Text style={styles.erroText}>{erroPareamento}</Text>
+                  ) : null}
+                </>
               )}
 
               <View style={styles.editDivider} />
@@ -577,5 +681,81 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#667085',
+  },
+
+  parceiroBox: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+
+  parceiroInfo: {
+    flex: 1,
+  },
+
+  parceiroNome: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#18212F',
+  },
+
+  parceiroCodigo: {
+    fontSize: 10,
+    color: '#667085',
+    marginTop: 2,
+  },
+
+  desparerarBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F04438',
+  },
+
+  desparerarBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#F04438',
+  },
+
+  parceirosLista: {
+    marginTop: 8,
+    gap: 6,
+  },
+
+  parceiroOpcao: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D0D5DD',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FAFAFA',
+  },
+
+  parceiroOpcaoNome: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#18212F',
+  },
+
+  parceiroOpcaoCodigo: {
+    fontSize: 10,
+    color: '#667085',
+    marginTop: 2,
+  },
+
+  parceiroVazio: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#98A2B3',
+    textAlign: 'center',
+    paddingVertical: 8,
   },
 });
