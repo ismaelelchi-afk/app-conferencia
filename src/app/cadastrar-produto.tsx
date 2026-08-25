@@ -22,7 +22,6 @@ import {
   buscarPorCodigoInterno,
   criarProdutoManual,
   removerProduto,
-  validarCodigoBarrasCond,
 } from '@/database/database';
 import type { Produto, TipoProduto } from '@/models/produto';
 
@@ -49,7 +48,7 @@ export default function CadastrarProdutoScreen() {
   const [modelo, setModelo] = useState('');
   const [descricao, setDescricao] = useState('');
   const [tipoProduto, setTipoProduto] = useState<TipoProduto>('normal');
-  const [codigoBarrasCond, setCodigoBarrasCond] = useState('');
+  const [codigoPar, setCodigoPar] = useState('');
 
   // ----------------------------------------------------------
   // ESTADO DA TELA
@@ -88,7 +87,7 @@ export default function CadastrarProdutoScreen() {
         setModelo(produto.modelo ?? '');
         setDescricao(produto.descricao ?? '');
         setTipoProduto(produto.tipoProduto ?? 'normal');
-        setCodigoBarrasCond(produto.codigoBarrasCond ?? '');
+        setCodigoPar(produto.codigoPar ?? '');
       })
       .catch(() => setErro('Erro ao carregar produto.'))
       .finally(() => setCarregando(false));
@@ -105,21 +104,7 @@ export default function CadastrarProdutoScreen() {
     setErro(null);
 
     try {
-      const condTrimmed = codigoBarrasCond.trim();
-
-      if (tipoProduto === 'evaporadora' && condTrimmed) {
-        const erroValidacao = await validarCodigoBarrasCond(
-          condTrimmed,
-          modoEdicao && produtoOriginal
-            ? produtoOriginal.codigoInterno
-            : '__novo__',
-        );
-        if (erroValidacao) {
-          setErro(erroValidacao);
-          setSalvando(false);
-          return;
-        }
-      }
+      const parTrimmed = codigoPar.trim() || undefined;
 
       if (modoEdicao && produtoOriginal) {
         const produtoAtualizado: Produto = {
@@ -131,7 +116,7 @@ export default function CadastrarProdutoScreen() {
           modelo: modelo.trim() || undefined,
           descricao: descricao.trim() || undefined,
           tipoProduto,
-          codigoBarrasCond: tipoProduto === 'evaporadora' && condTrimmed ? condTrimmed : undefined,
+          codigoPar: (tipoProduto === 'evaporadora' || tipoProduto === 'condensadora') ? parTrimmed : undefined,
         };
 
         await atualizarProduto(produtoAtualizado, codigoParam!);
@@ -145,7 +130,7 @@ export default function CadastrarProdutoScreen() {
           modelo: modelo.trim() || undefined,
           descricao: descricao.trim() || undefined,
           tipoProduto,
-          codigoBarrasCond: tipoProduto === 'evaporadora' && condTrimmed ? condTrimmed : null,
+          codigoPar: (tipoProduto === 'evaporadora' || tipoProduto === 'condensadora') ? parTrimmed : undefined,
         });
       }
 
@@ -402,16 +387,17 @@ export default function CadastrarProdutoScreen() {
             ))}
           </View>
 
-          {tipoProduto === 'evaporadora' && (
+          {(tipoProduto === 'evaporadora' || tipoProduto === 'condensadora') && (
             <>
-              <Text style={styles.label}>CÓDIGO DE BARRAS COND (Condensadora)</Text>
+              <Text style={styles.label}>CÓDIGO DO CONJUNTO</Text>
+              <Text style={styles.labelHelper}>Use o mesmo código na evaporadora e condensadora correspondentes</Text>
               <TextInput
                 style={styles.input}
-                value={codigoBarrasCond}
-                onChangeText={setCodigoBarrasCond}
-                placeholder="Opcional — cadastrar depois se necessário"
+                value={codigoPar}
+                onChangeText={setCodigoPar}
+                placeholder="Ex.: SPRINGER-9000 (opcional)"
                 placeholderTextColor="#98A2B3"
-                keyboardType="number-pad"
+                autoCapitalize="characters"
                 editable={!salvando && !sucesso}
               />
             </>
@@ -531,6 +517,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#667085',
     letterSpacing: 0.6,
+  },
+
+  labelHelper: {
+    marginTop: 3,
+    fontSize: 10,
+    color: '#98A2B3',
+    lineHeight: 14,
   },
 
   input: {

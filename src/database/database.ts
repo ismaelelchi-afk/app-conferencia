@@ -195,6 +195,16 @@ export async function inicializarDatabase(): Promise<void> {
     );
   }
 
+  // Migração: codigo_par — campo livre de vinculação entre evaporadora e condensadora.
+  const colCodigoPar = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'codigo_par';`,
+  );
+  if (!colCodigoPar || colCodigoPar.cnt === 0) {
+    await db.execAsync(
+      `ALTER TABLE produtos ADD COLUMN codigo_par TEXT;`,
+    );
+  }
+
   // ----------------------------------------------------------
   // CONFIGURAÇÕES (chave/valor)
   // ----------------------------------------------------------
@@ -249,7 +259,7 @@ export async function salvarConfiguracao(
 type ProdutoSQLite = {
   codigo_interno: string;
   codigo_barras: string | null;
-  codigo_barras_cond: string | null;
+  codigo_par: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
@@ -265,7 +275,7 @@ function converterProduto(produto: ProdutoSQLite): Produto {
   return {
     codigoInterno: produto.codigo_interno,
     codigoBarras: produto.codigo_barras ?? '',
-    codigoBarrasCond: produto.codigo_barras_cond ?? undefined,
+    codigoPar: produto.codigo_par ?? undefined,
     nome: produto.nome,
     marca: produto.marca ?? undefined,
     categoria: produto.categoria ?? undefined,
@@ -289,7 +299,6 @@ async function adicionarProduto(produto: Produto): Promise<void> {
       INSERT INTO produtos (
         codigo_interno,
         codigo_barras,
-        codigo_barras_cond,
         nome,
         marca,
         categoria,
@@ -297,13 +306,13 @@ async function adicionarProduto(produto: Produto): Promise<void> {
         descricao,
         ativo,
         origem,
-        tipo_produto
+        tipo_produto,
+        codigo_par
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `,
     produto.codigoInterno,
     produto.codigoBarras || null,
-    produto.codigoBarrasCond || null,
     produto.nome,
     produto.marca ?? null,
     produto.categoria ?? null,
@@ -312,6 +321,7 @@ async function adicionarProduto(produto: Produto): Promise<void> {
     produto.ativo ? 1 : 0,
     produto.origem,
     produto.tipoProduto ?? 'normal',
+    produto.codigoPar ?? null,
   );
 }
 
@@ -451,7 +461,7 @@ export async function atualizarProduto(
            modelo = ?,
            descricao = ?,
            tipo_produto = ?,
-           codigo_barras_cond = ?
+           codigo_par = ?
          WHERE codigo_interno = ?;`,
         produto.codigoInterno,
         produto.nome,
@@ -460,7 +470,7 @@ export async function atualizarProduto(
         produto.modelo ?? null,
         produto.descricao ?? null,
         produto.tipoProduto ?? 'normal',
-        produto.codigoBarrasCond || null,
+        produto.codigoPar ?? null,
         codigoInternoOriginal,
       );
     });
@@ -766,7 +776,7 @@ export async function exportarCatalogo(): Promise<string> {
 export type DadosProdutoManual = {
   codigoInterno?: string;
   codigoBarras?: string | null;
-  codigoBarrasCond?: string | null;
+  codigoPar?: string;
   nome: string;
   marca?: string;
   categoria?: string;
@@ -783,7 +793,7 @@ export async function criarProdutoManual(
   const produto: Produto = {
     codigoInterno,
     codigoBarras: dados.codigoBarras ?? '',
-    codigoBarrasCond: dados.codigoBarrasCond ?? undefined,
+    codigoPar: dados.codigoPar ?? undefined,
     nome: dados.nome,
     marca: dados.marca,
     categoria: dados.categoria,
@@ -1179,7 +1189,7 @@ type LeituraConferenciaSQLite = {
   status_revisao: StatusRevisao;
   codigo_interno: string;
   codigo_barras: string | null;
-  codigo_barras_cond: string | null;
+  codigo_par: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
@@ -1206,7 +1216,7 @@ export async function obterLeiturasConferencia(
         leituras_conferencia.status_revisao AS status_revisao,
         produtos.codigo_interno AS codigo_interno,
         produtos.codigo_barras AS codigo_barras,
-        produtos.codigo_barras_cond AS codigo_barras_cond,
+        produtos.codigo_par AS codigo_par,
         produtos.nome AS nome,
         produtos.marca AS marca,
         produtos.categoria AS categoria,
@@ -1229,7 +1239,7 @@ export async function obterLeiturasConferencia(
     produto: converterProduto({
       codigo_interno: item.codigo_interno,
       codigo_barras: item.codigo_barras,
-      codigo_barras_cond: item.codigo_barras_cond,
+      codigo_par: item.codigo_par,
       nome: item.nome,
       marca: item.marca,
       categoria: item.categoria,
@@ -1514,43 +1524,6 @@ export async function marcarStatusRevisao(
     conferenciaId,
     codigoInterno,
   );
-}
-
-// ============================================================
-// AR CONDICIONADO — VALIDAR CÓDIGO BARRAS COND
-// Garante que o código não está em uso em outro produto.
-// Retorna mensagem de erro ou null se válido.
-// ============================================================
-
-export async function validarCodigoBarrasCond(
-  codigoBarrasCond: string,
-  codigoInternoExcluir: string,
-): Promise<string | null> {
-  const db = await obterDatabase();
-
-  const comoVap = await db.getFirstAsync<{ codigo_interno: string }>(
-    `SELECT codigo_interno FROM produtos
-     WHERE codigo_barras = ? AND codigo_interno != ? AND ativo = 1
-     LIMIT 1;`,
-    codigoBarrasCond,
-    codigoInternoExcluir,
-  );
-  if (comoVap) {
-    return `Código já é a VAP do produto ${comoVap.codigo_interno}.`;
-  }
-
-  const comoCond = await db.getFirstAsync<{ codigo_interno: string }>(
-    `SELECT codigo_interno FROM produtos
-     WHERE codigo_barras_cond = ? AND codigo_interno != ? AND ativo = 1
-     LIMIT 1;`,
-    codigoBarrasCond,
-    codigoInternoExcluir,
-  );
-  if (comoCond) {
-    return `Código já é a COND do produto ${comoCond.codigo_interno}.`;
-  }
-
-  return null;
 }
 
 // ============================================================

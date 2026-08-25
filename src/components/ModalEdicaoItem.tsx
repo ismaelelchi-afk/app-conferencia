@@ -28,7 +28,6 @@ type Props = {
   onSalvarQuantidade: (novaQuantidade: number) => void;
   onRemover: () => void;
   onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
-  onSalvarCond?: (codigoBarrasCond: string) => Promise<string | null>;
   onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
   onSalvarDadosProduto?: (dados: DadosProduto) => Promise<string | null>;
 };
@@ -45,7 +44,6 @@ export function ModalEdicaoItem({
   onSalvarQuantidade,
   onRemover,
   onSalvarProdutoNovo,
-  onSalvarCond,
   onAtualizarTipo,
   onSalvarDadosProduto,
 }: Props) {
@@ -73,13 +71,6 @@ export function ModalEdicaoItem({
   );
   const [salvandoTipo, setSalvandoTipo] = useState(false);
   const [erroTipo, setErroTipo] = useState<string | null>(null);
-
-  // COND barcode
-  const [novaCondBarras, setNovaCondBarras] = useState(
-    item.produto.codigoBarrasCond ?? '',
-  );
-  const [salvandoCond, setSalvandoCond] = useState(false);
-  const [erroCond, setErroCond] = useState<string | null>(null);
 
   const ehDesconhecido = item.status === 'desconhecido';
   const nomeValido = nome.trim().length >= 3;
@@ -117,20 +108,6 @@ export function ModalEdicaoItem({
       setErroDados(erro);
     }
     setSalvandoDados(false);
-  }
-
-  async function handleSalvarCond() {
-    if (!onSalvarCond || salvandoCond) return;
-    const trimmed = novaCondBarras.trim();
-    if (!trimmed) return;
-
-    setSalvandoCond(true);
-    setErroCond(null);
-    const erro = await onSalvarCond(trimmed);
-    if (erro) {
-      setErroCond(erro);
-      setSalvandoCond(false);
-    }
   }
 
   return (
@@ -338,44 +315,12 @@ export function ModalEdicaoItem({
                 </>
               )}
 
-              {/* Código barras COND (só quando Evaporadora) */}
-              {tipoLocal === 'evaporadora' && onSalvarCond && (
-                <>
-                  <Text style={styles.editLabel}>CÓDIGO BARRAS COND</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={novaCondBarras}
-                    onChangeText={(v) => {
-                      setNovaCondBarras(v);
-                      setErroCond(null);
-                    }}
-                    placeholder={
-                      item.produto.codigoBarrasCond || 'Não cadastrada'
-                    }
-                    placeholderTextColor="#98A2B3"
-                    keyboardType="number-pad"
-                    editable={!salvandoCond}
-                  />
-
-                  {erroCond ? (
-                    <Text style={styles.erroText}>{erroCond}</Text>
-                  ) : null}
-
-                  <Pressable
-                    style={[
-                      styles.editSaveButton,
-                      styles.editSaveButtonCond,
-                      (!novaCondBarras.trim() || salvandoCond) &&
-                        styles.editButtonDisabled,
-                    ]}
-                    disabled={!novaCondBarras.trim() || salvandoCond}
-                    onPress={() => { void handleSalvarCond(); }}
-                  >
-                    <Text style={styles.editSaveButtonText}>
-                      SALVAR COND
-                    </Text>
-                  </Pressable>
-                </>
+              {/* Código do conjunto (read-only) */}
+              {(tipoLocal === 'evaporadora' || tipoLocal === 'condensadora') && item.produto.codigoPar && (
+                <View style={styles.barcodeBox}>
+                  <Text style={styles.barcodeBoxLabel}>CÓDIGO DO CONJUNTO</Text>
+                  <Text selectable style={styles.barcodeBoxValue}>{item.produto.codigoPar}</Text>
+                </View>
               )}
 
               <View style={styles.editDivider} />

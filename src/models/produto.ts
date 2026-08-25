@@ -9,7 +9,7 @@ export type TipoProduto = 'normal' | 'evaporadora' | 'condensadora';
 export type Produto = {
   codigoInterno: string;
   codigoBarras: string;
-  codigoBarrasCond?: string;
+  codigoPar?: string;
   nome: string;
   marca?: string;
   categoria?: string;

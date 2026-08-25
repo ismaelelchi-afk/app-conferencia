@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -22,7 +22,6 @@ import {
   obterResumoConferencia,
   obterResumoRevisao,
   removerLeituraConferencia,
-  validarCodigoBarrasCond,
 } from '@/database/database';
 import type {
   Conferencia,
@@ -403,38 +402,6 @@ export default function ResultadoScreen() {
     }
   }
 
-  async function salvarCond(
-    codigoBarrasCond: string,
-  ): Promise<string | null> {
-    if (!itemEditando || !conferenciaValida) return null;
-
-    const erroValidacao = await validarCodigoBarrasCond(
-      codigoBarrasCond,
-      itemEditando.produto.codigoInterno,
-    );
-    if (erroValidacao) return erroValidacao;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoBarrasCond },
-        itemEditando.produto.codigoInterno,
-      );
-
-      setLeituras((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...item, produto: { ...item.produto, codigoBarrasCond } }
-            : item,
-        ),
-      );
-
-      fecharEdicao();
-      return null;
-    } catch {
-      return 'Não foi possível salvar o código COND.';
-    }
-  }
-
   // ==========================================================
   // CONFIRMAR FINALIZAÇÃO
   // ==========================================================
@@ -460,6 +427,30 @@ export default function ResultadoScreen() {
     (total, item) => total + item.quantidade,
     0,
   );
+
+  const itensOrganizados = useMemo(() => {
+    const grupos: Record<string, LeituraConferencia[]> = {};
+    const individuais: LeituraConferencia[] = [];
+
+    for (const item of leituras) {
+      if (
+        item.produto.codigoPar &&
+        (item.produto.tipoProduto === 'evaporadora' ||
+          item.produto.tipoProduto === 'condensadora')
+      ) {
+        grupos[item.produto.codigoPar] = grupos[item.produto.codigoPar] ?? [];
+        grupos[item.produto.codigoPar].push(item);
+      } else {
+        individuais.push(item);
+      }
+    }
+
+    for (const g of Object.values(grupos)) {
+      g.sort((a) => (a.produto.tipoProduto === 'evaporadora' ? -1 : 1));
+    }
+
+    return { grupos, individuais };
+  }, [leituras]);
 
   // ==========================================================
   // CARREGANDO
@@ -667,149 +658,162 @@ export default function ResultadoScreen() {
               </Text>
             </View>
           ) : (
-            leituras.map((item) => {
-              const cor = CORES_STATUS[item.status];
-
-              return (
-                <View
-                  key={item.produto.codigoInterno}
-                  onLayout={(e) => {
-                    itemYPositions.current[item.produto.codigoInterno] =
-                      e.nativeEvent.layout.y;
-                  }}
-                  style={[
-                    styles.productCard,
-                    { borderColor: cor.borda, backgroundColor: cor.fundo },
-                  ]}
-                >
-                  {/* Área clicável para editar quantidade */}
-                  <Pressable
-                    style={styles.productMain}
-                    onPress={() => abrirEdicao(item)}
-                    disabled={!modoRevisao}
-                  >
-                    <View
-                      style={[
-                        styles.productCodeBox,
-                        { backgroundColor: cor.borda },
-                      ]}
-                    >
-                      <Text style={styles.productCode}>
-                        {item.produto.codigoInterno}
-                      </Text>
+            <>
+              {/* Pares agrupados */}
+              {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
+                const ambosPresentes = items.length === 2;
+                return (
+                  <View key={`par-${codigoPar}`}>
+                    <View style={styles.parHeader}>
+                      <Text style={styles.parHeaderText}>❄ CONJUNTO</Text>
+                      <Text style={styles.parHeaderCodigo}>{codigoPar}</Text>
+                      {ambosPresentes && (
+                        <View style={styles.parHeaderBadge}>
+                          <Text style={styles.parHeaderBadgeText}>COMPLETO</Text>
+                        </View>
+                      )}
                     </View>
-
-                    <View style={styles.productInfo}>
-                      <Text style={styles.productName}>
-                        {item.produto.nome}
-                      </Text>
-
-                      <View style={styles.productMetaRow}>
-                        <Text style={styles.productQuantity}>
-                          Qtd: {item.quantidade}
-                        </Text>
-
+                    {items.map((item) => {
+                      const cor = CORES_STATUS[item.status];
+                      return (
                         <View
+                          key={item.produto.codigoInterno}
+                          onLayout={(e) => {
+                            itemYPositions.current[item.produto.codigoInterno] =
+                              e.nativeEvent.layout.y;
+                          }}
                           style={[
-                            styles.badgeSmall,
-                            { backgroundColor: cor.borda },
+                            styles.productCard,
+                            styles.productCardPar,
+                            { borderColor: cor.borda, backgroundColor: cor.fundo },
                           ]}
                         >
-                          <Text style={styles.badgeSmallText}>
-                            {cor.etiqueta}
-                          </Text>
-                        </View>
-                      </View>
-
-                      {/* Badge de tipo para evaporadora/condensadora */}
-                      {item.produto.tipoProduto !== 'normal' && (
-                        <View style={styles.acPartesRow}>
-                          <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
-                            {item.produto.tipoProduto === 'evaporadora'
-                              ? '❄ Evaporadora'
-                              : '❄ Condensadora'}
-                          </Text>
-                        </View>
-                      )}
-
-                      {modoRevisao && (
-                        <Text style={styles.editHint}>
-                          toque para editar quantidade
-                        </Text>
-                      )}
-                    </View>
-                  </Pressable>
-
-                  {/* Botões de revisão */}
-                  {modoRevisao && (
-                    <View style={styles.revisaoBotoes}>
-                      <Pressable
-                            style={[
-                              styles.btnRevisao,
-                              styles.btnOk,
-                              item.statusRevisao === 'ok' && styles.btnOkAtivo,
-                            ]}
-                            onPress={() => void alterarRevisao(item, 'ok')}
+                          <Pressable
+                            style={styles.productMain}
+                            onPress={() => abrirEdicao(item)}
+                            disabled={!modoRevisao}
                           >
-                            <Text
-                              style={[
-                                styles.btnRevisaoTexto,
-                                item.statusRevisao === 'ok' &&
-                                  styles.btnOkTextoAtivo,
-                              ]}
-                            >
-                              ✓ OK
-                            </Text>
+                            <View style={[styles.productCodeBox, { backgroundColor: cor.borda }]}>
+                              <Text style={styles.productCode}>{item.produto.codigoInterno}</Text>
+                            </View>
+                            <View style={styles.productInfo}>
+                              <Text style={styles.productName}>{item.produto.nome}</Text>
+                              <View style={styles.productMetaRow}>
+                                <Text style={styles.productQuantity}>Qtd: {item.quantidade}</Text>
+                                <View style={[styles.badgeSmall, { backgroundColor: cor.borda }]}>
+                                  <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
+                                </View>
+                              </View>
+                              <View style={styles.acPartesRow}>
+                                <Text style={[styles.acParteBadge, item.produto.tipoProduto === 'evaporadora' ? styles.acParteBadgeEva : styles.acParteBadgeCond]}>
+                                  {item.produto.tipoProduto === 'evaporadora' ? '❄ Evaporadora' : '❄ Condensadora'}
+                                </Text>
+                              </View>
+                              {modoRevisao && (
+                                <Text style={styles.editHint}>toque para editar quantidade</Text>
+                              )}
+                            </View>
                           </Pressable>
+                          {modoRevisao && (
+                            <View style={styles.revisaoBotoes}>
+                              <Pressable
+                                style={[styles.btnRevisao, styles.btnOk, item.statusRevisao === 'ok' && styles.btnOkAtivo]}
+                                onPress={() => void alterarRevisao(item, 'ok')}
+                              >
+                                <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'ok' && styles.btnOkTextoAtivo]}>✓ OK</Text>
+                              </Pressable>
+                              <Pressable
+                                style={[styles.btnRevisao, styles.btnDiv, item.statusRevisao === 'divergencia' && styles.btnDivAtivo]}
+                                onPress={() => void alterarRevisao(item, 'divergencia')}
+                              >
+                                <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'divergencia' && styles.btnDivTextoAtivo]}>✗ Div.</Text>
+                              </Pressable>
+                              <Pressable
+                                style={[styles.btnRevisao, styles.btnPend, item.statusRevisao === 'pendente' && styles.btnPendAtivo]}
+                                onPress={() => void alterarRevisao(item, 'pendente')}
+                              >
+                                <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'pendente' && styles.btnPendTextoAtivo]}>— Pend.</Text>
+                              </Pressable>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              })}
 
-                      <Pressable
-                        style={[
-                          styles.btnRevisao,
-                          styles.btnDiv,
-                          item.statusRevisao === 'divergencia' &&
-                            styles.btnDivAtivo,
-                        ]}
-                        onPress={() =>
-                          void alterarRevisao(item, 'divergencia')
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.btnRevisaoTexto,
-                            item.statusRevisao === 'divergencia' &&
-                              styles.btnDivTextoAtivo,
-                          ]}
+              {/* Individuais */}
+              {itensOrganizados.individuais.map((item) => {
+                const cor = CORES_STATUS[item.status];
+                return (
+                  <View
+                    key={item.produto.codigoInterno}
+                    onLayout={(e) => {
+                      itemYPositions.current[item.produto.codigoInterno] =
+                        e.nativeEvent.layout.y;
+                    }}
+                    style={[
+                      styles.productCard,
+                      { borderColor: cor.borda, backgroundColor: cor.fundo },
+                    ]}
+                  >
+                    <Pressable
+                      style={styles.productMain}
+                      onPress={() => abrirEdicao(item)}
+                      disabled={!modoRevisao}
+                    >
+                      <View style={[styles.productCodeBox, { backgroundColor: cor.borda }]}>
+                        <Text style={styles.productCode}>{item.produto.codigoInterno}</Text>
+                      </View>
+                      <View style={styles.productInfo}>
+                        <Text style={styles.productName}>{item.produto.nome}</Text>
+                        <View style={styles.productMetaRow}>
+                          <Text style={styles.productQuantity}>Qtd: {item.quantidade}</Text>
+                          <View style={[styles.badgeSmall, { backgroundColor: cor.borda }]}>
+                            <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
+                          </View>
+                        </View>
+                        {item.produto.tipoProduto !== 'normal' && (
+                          <View style={styles.acPartesRow}>
+                            <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
+                              {item.produto.tipoProduto === 'evaporadora'
+                                ? '❄ Evaporadora'
+                                : '❄ Condensadora'}
+                            </Text>
+                          </View>
+                        )}
+                        {modoRevisao && (
+                          <Text style={styles.editHint}>toque para editar quantidade</Text>
+                        )}
+                      </View>
+                    </Pressable>
+                    {modoRevisao && (
+                      <View style={styles.revisaoBotoes}>
+                        <Pressable
+                          style={[styles.btnRevisao, styles.btnOk, item.statusRevisao === 'ok' && styles.btnOkAtivo]}
+                          onPress={() => void alterarRevisao(item, 'ok')}
                         >
-                          ✗ Div.
-                        </Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={[
-                          styles.btnRevisao,
-                          styles.btnPend,
-                          item.statusRevisao === 'pendente' &&
-                            styles.btnPendAtivo,
-                        ]}
-                        onPress={() =>
-                          void alterarRevisao(item, 'pendente')
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.btnRevisaoTexto,
-                            item.statusRevisao === 'pendente' &&
-                              styles.btnPendTextoAtivo,
-                          ]}
+                          <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'ok' && styles.btnOkTextoAtivo]}>✓ OK</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.btnRevisao, styles.btnDiv, item.statusRevisao === 'divergencia' && styles.btnDivAtivo]}
+                          onPress={() => void alterarRevisao(item, 'divergencia')}
                         >
-                          — Pend.
-                        </Text>
-                      </Pressable>
-                    </View>
-                  )}
-                </View>
-              );
-            })
+                          <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'divergencia' && styles.btnDivTextoAtivo]}>✗ Div.</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.btnRevisao, styles.btnPend, item.statusRevisao === 'pendente' && styles.btnPendAtivo]}
+                          onPress={() => void alterarRevisao(item, 'pendente')}
+                        >
+                          <Text style={[styles.btnRevisaoTexto, item.statusRevisao === 'pendente' && styles.btnPendTextoAtivo]}>— Pend.</Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </>
           )}
 
         </ScrollView>
@@ -864,7 +868,6 @@ export default function ResultadoScreen() {
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
-          onSalvarCond={salvarCond}
           onAtualizarTipo={atualizarTipo}
           onSalvarDadosProduto={salvarDadosProduto}
         />
@@ -1331,6 +1334,71 @@ const styles = StyleSheet.create({
   acParteBadgeTipo: {
     backgroundColor: '#EFF8FF',
     color: '#175CD3',
+  },
+
+  parHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+    gap: 6,
+  },
+
+  parHeaderText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#175CD3',
+    letterSpacing: 0.6,
+  },
+
+  parHeaderCodigo: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#344054',
+    flex: 1,
+  },
+
+  parHeaderBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#ECFDF3',
+  },
+
+  parHeaderBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#027A48',
+  },
+
+  productCardPar: {
+    marginLeft: 8,
+    borderLeftWidth: 3,
+  },
+
+  acParteBadgeEva: {
+    backgroundColor: '#EFF8FF',
+    color: '#175CD3',
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+  },
+
+  acParteBadgeCond: {
+    backgroundColor: '#F4F3FF',
+    color: '#5925DC',
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
   },
 
   // Botões de revisão

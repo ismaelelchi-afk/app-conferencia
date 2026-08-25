@@ -9,7 +9,7 @@ import {
 
 import { useAudioPlayer } from 'expo-audio';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   ActivityIndicator,
@@ -42,7 +42,6 @@ import {
   registrarLeituraConferencia,
   registrarProdutoDesconhecido,
   removerLeituraConferencia,
-  validarCodigoBarrasCond,
 } from '@/database/database';
 
 import { CORES_STATUS } from '@/constants/cores';
@@ -619,41 +618,6 @@ function abrirEdicao(item: LeituraConferencia) {
     }
   }
 
-  async function salvarCond(
-    codigoBarrasCond: string,
-  ): Promise<string | null> {
-    if (!itemEditando || !conferenciaValida) return null;
-
-    const erroValidacao = await validarCodigoBarrasCond(
-      codigoBarrasCond,
-      itemEditando.produto.codigoInterno,
-    );
-    if (erroValidacao) return erroValidacao;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoBarrasCond },
-        itemEditando.produto.codigoInterno,
-      );
-
-      setProdutos((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? {
-                ...item,
-                produto: { ...item.produto, codigoBarrasCond },
-              }
-            : item,
-        ),
-      );
-
-      fecharEdicao();
-      return null;
-    } catch {
-      return 'Não foi possível salvar o código COND.';
-    }
-  }
-
   function abrirRenomear() {
     setNovoNome(nomeConferencia);
     setMostrarRenomear(true);
@@ -710,6 +674,30 @@ function abrirEdicao(item: LeituraConferencia) {
       setCancelando(false);
     }
   }
+
+  const itensOrganizados = useMemo(() => {
+    const grupos: Record<string, LeituraConferencia[]> = {};
+    const individuais: LeituraConferencia[] = [];
+
+    for (const item of produtos) {
+      if (
+        item.produto.codigoPar &&
+        (item.produto.tipoProduto === 'evaporadora' ||
+          item.produto.tipoProduto === 'condensadora')
+      ) {
+        grupos[item.produto.codigoPar] = grupos[item.produto.codigoPar] ?? [];
+        grupos[item.produto.codigoPar].push(item);
+      } else {
+        individuais.push(item);
+      }
+    }
+
+    for (const g of Object.values(grupos)) {
+      g.sort((a) => (a.produto.tipoProduto === 'evaporadora' ? -1 : 1));
+    }
+
+    return { grupos, individuais };
+  }, [produtos]);
 
   if (!conferenciaValida) {
     return (
@@ -936,73 +924,123 @@ return (
               </Text>
             </View>
           ) : (
-            produtos.map((item) => {
-              const cor = CORES_STATUS[item.status];
+            <>
+              {/* Pares agrupados */}
+              {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
+                const ambosPresentes = items.length === 2;
+                return (
+                  <View key={`par-${codigoPar}`}>
+                    <View style={styles.parHeader}>
+                      <Text style={styles.parHeaderText}>❄ CONJUNTO</Text>
+                      <Text style={styles.parHeaderCodigo}>{codigoPar}</Text>
+                      {ambosPresentes && (
+                        <View style={styles.parHeaderBadge}>
+                          <Text style={styles.parHeaderBadgeText}>COMPLETO</Text>
+                        </View>
+                      )}
+                    </View>
+                    {items.map((item) => {
+                      const cor = CORES_STATUS[item.status];
+                      return (
+                        <Pressable
+                          key={item.produto.codigoInterno}
+                          style={[styles.productCard, styles.productCardPar, { borderColor: cor.borda, backgroundColor: cor.fundo }]}
+                          onPress={() => abrirEdicao(item)}
+                        >
+                          <View style={styles.productInfo}>
+                            <View style={styles.productTopRow}>
+                              <Text style={[styles.internalCodeLarge, { color: cor.texto }]}>
+                                {item.produto.codigoInterno}
+                              </Text>
+                              <View style={[styles.badgeSmall, { backgroundColor: cor.borda }]}>
+                                <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
+                              </View>
+                            </View>
+                            <Text style={styles.productNameList} numberOfLines={1}>{item.produto.nome}</Text>
+                            <Text style={[styles.acParteBadge, item.produto.tipoProduto === 'evaporadora' ? styles.acParteBadgeEva : styles.acParteBadgeCond]}>
+                              {item.produto.tipoProduto === 'evaporadora' ? '❄ Evaporadora' : '❄ Condensadora'}
+                            </Text>
+                          </View>
+                          <View style={styles.quantityBox}>
+                            <Text style={styles.quantityLabel}>QTD</Text>
+                            <Text style={styles.quantityValue}>{item.quantidade}</Text>
+                            <Text style={styles.editHint}>toque p/ editar</Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                );
+              })}
 
-              return (
-                <Pressable
-                  key={item.produto.codigoInterno}
-                  style={[
-                    styles.productCard,
-                    { borderColor: cor.borda, backgroundColor: cor.fundo },
-                  ]}
-                  onPress={() => abrirEdicao(item)}
-                >
-                  <View style={styles.productInfo}>
-                    <View style={styles.productTopRow}>
+              {/* Individuais */}
+              {itensOrganizados.individuais.map((item) => {
+                const cor = CORES_STATUS[item.status];
+                return (
+                  <Pressable
+                    key={item.produto.codigoInterno}
+                    style={[
+                      styles.productCard,
+                      { borderColor: cor.borda, backgroundColor: cor.fundo },
+                    ]}
+                    onPress={() => abrirEdicao(item)}
+                  >
+                    <View style={styles.productInfo}>
+                      <View style={styles.productTopRow}>
+                        <Text
+                          style={[
+                            styles.internalCodeLarge,
+                            { color: cor.texto },
+                          ]}
+                        >
+                          {item.produto.codigoInterno}
+                        </Text>
+
+                        <View
+                          style={[
+                            styles.badgeSmall,
+                            { backgroundColor: cor.borda },
+                          ]}
+                        >
+                          <Text style={styles.badgeSmallText}>
+                            {cor.etiqueta}
+                          </Text>
+                        </View>
+                      </View>
+
                       <Text
-                        style={[
-                          styles.internalCodeLarge,
-                          { color: cor.texto },
-                        ]}
+                        style={styles.productNameList}
+                        numberOfLines={2}
                       >
-                        {item.produto.codigoInterno}
+                        {item.produto.nome}
                       </Text>
 
-                      <View
-                        style={[
-                          styles.badgeSmall,
-                          { backgroundColor: cor.borda },
-                        ]}
-                      >
-                        <Text style={styles.badgeSmallText}>
-                          {cor.etiqueta}
+                      {item.produto.tipoProduto !== 'normal' ? (
+                        <View style={styles.acPartesRow}>
+                          <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
+                            {item.produto.tipoProduto === 'evaporadora'
+                              ? '❄ Evaporadora'
+                              : '❄ Condensadora'}
+                          </Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.productBarcode}>
+                          {item.produto.codigoBarras || 'sem código de barras'}
                         </Text>
-                      </View>
+                      )}
                     </View>
 
-                    <Text
-                      style={styles.productNameList}
-                      numberOfLines={2}
-                    >
-                      {item.produto.nome}
-                    </Text>
-
-                    {item.produto.tipoProduto !== 'normal' ? (
-                      <View style={styles.acPartesRow}>
-                        <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
-                          {item.produto.tipoProduto === 'evaporadora'
-                            ? '❄ Evaporadora'
-                            : '❄ Condensadora'}
-                        </Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.productBarcode}>
-                        {item.produto.codigoBarras || 'sem código de barras'}
+                    <View style={styles.quantityBox}>
+                      <Text style={styles.quantityLabel}>QTD</Text>
+                      <Text style={styles.quantityValue}>
+                        {item.quantidade}
                       </Text>
-                    )}
-                  </View>
-
-                  <View style={styles.quantityBox}>
-                    <Text style={styles.quantityLabel}>QTD</Text>
-                    <Text style={styles.quantityValue}>
-                      {item.quantidade}
-                    </Text>
-                    <Text style={styles.editHint}>toque p/ editar</Text>
-                  </View>
-                </Pressable>
-              );
-            })
+                      <Text style={styles.editHint}>toque p/ editar</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </>
           )}
         </ScrollView>
       </View>
@@ -1052,7 +1090,6 @@ return (
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
-          onSalvarCond={salvarCond}
           onAtualizarTipo={atualizarTipo}
           onSalvarDadosProduto={salvarDadosProduto}
         />
@@ -1558,6 +1595,71 @@ const styles = StyleSheet.create({
   acParteBadgeTipo: {
     backgroundColor: '#EFF8FF',
     color: '#175CD3',
+  },
+
+  parHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+    gap: 6,
+  },
+
+  parHeaderText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#175CD3',
+    letterSpacing: 0.6,
+  },
+
+  parHeaderCodigo: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#344054',
+    flex: 1,
+  },
+
+  parHeaderBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#ECFDF3',
+  },
+
+  parHeaderBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#027A48',
+  },
+
+  productCardPar: {
+    marginLeft: 8,
+    borderLeftWidth: 3,
+  },
+
+  acParteBadgeEva: {
+    backgroundColor: '#EFF8FF',
+    color: '#175CD3',
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
+  },
+
+  acParteBadgeCond: {
+    backgroundColor: '#F4F3FF',
+    color: '#5925DC',
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginTop: 3,
   },
 
   quantityBox: {
