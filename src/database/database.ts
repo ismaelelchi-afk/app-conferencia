@@ -823,20 +823,32 @@ export async function registrarProdutoDesconhecido(
     return existente;
   }
 
+  const db = await obterDatabase();
   const codigoInterno = gerarCodigoInternoDesconhecido(codigoBarras);
+  const nome = `Produto não identificado (${codigoBarras})`;
 
-  const produto: Produto = {
+  // UPSERT: se o código_interno já existe (ex: produto removido anteriormente),
+  // reativa-o em vez de tentar um INSERT duplicado.
+  await db.runAsync(
+    `INSERT INTO produtos (codigo_interno, codigo_barras, nome, ativo, origem, tipo_produto)
+     VALUES (?, ?, ?, 1, 'desconhecido', 'normal')
+     ON CONFLICT(codigo_interno) DO UPDATE SET
+       ativo = 1,
+       codigo_barras = excluded.codigo_barras,
+       origem = 'desconhecido';`,
     codigoInterno,
     codigoBarras,
-    nome: `Produto não identificado (${codigoBarras})`,
+    nome,
+  );
+
+  return {
+    codigoInterno,
+    codigoBarras,
+    nome,
     ativo: true,
     origem: 'desconhecido',
     tipoProduto: 'normal',
   };
-
-  await adicionarProduto(produto);
-
-  return produto;
 }
 
 // ============================================================

@@ -20,6 +20,7 @@ import {
   apagarHistoricoFinalizado,
   contarProdutos,
   contarProdutosPorOrigem,
+  exportarCatalogo,
   importarCatalogoExterno,
   obterConfiguracao,
   obterDadosExportacaoHistorico,
@@ -47,6 +48,7 @@ export default function ConfiguracoesScreen() {
   const [produtosParaRevisar, setProdutosParaRevisar] = useState(0);
 
   const [reimportando, setReimportando] = useState(false);
+  const [exportandoCatalogo, setExportandoCatalogo] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [apagando, setApagando] = useState(false);
   const [resetando, setResetando] = useState(false);
@@ -185,6 +187,27 @@ export default function ConfiguracoesScreen() {
       setMensagem(msg);
     } finally {
       setReimportando(false);
+    }
+  }
+
+  async function exportarCatalogoDoDispositivo() {
+    if (exportandoCatalogo) return;
+
+    setExportandoCatalogo(true);
+    setMensagem(null);
+
+    try {
+      const json = await exportarCatalogo();
+
+      await Share.share({
+        message: json,
+        title: 'Catálogo RAMSONS — backup',
+      });
+    } catch (error) {
+      console.error('Erro ao exportar catálogo:', error);
+      setMensagem('Não foi possível exportar o catálogo.');
+    } finally {
+      setExportandoCatalogo(false);
     }
   }
 
@@ -520,6 +543,33 @@ export default function ConfiguracoesScreen() {
             </View>
 
             {reimportando ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={styles.actionArrow}>›</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.actionCard,
+              exportandoCatalogo && styles.cardDisabled,
+            ]}
+            onPress={() => {
+              void exportarCatalogoDoDispositivo();
+            }}
+            disabled={exportandoCatalogo}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>
+                Exportar catálogo do dispositivo
+              </Text>
+              <Text style={styles.actionText}>
+                Compartilha um arquivo .json com todos os
+                produtos. Pode ser reimportado depois.
+              </Text>
+            </View>
+
+            {exportandoCatalogo ? (
               <ActivityIndicator size="small" />
             ) : (
               <Text style={styles.actionArrow}>›</Text>
