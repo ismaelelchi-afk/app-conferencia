@@ -543,6 +543,8 @@ function abrirEdicao(item: LeituraConferencia) {
                 categoria: dados.categoria,
                 modelo: dados.modelo,
                 descricao: dados.descricao,
+                tipoProduto: dados.tipoProduto ?? 'normal',
+                codigoPar: dados.codigoPar,
                 origem: 'manual',
               },
             }

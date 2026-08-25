@@ -330,6 +330,8 @@ export default function ResultadoScreen() {
                 nome: dados.nome,
                 marca: dados.marca,
                 categoria: dados.categoria,
+                tipoProduto: dados.tipoProduto ?? 'normal',
+                codigoPar: dados.codigoPar,
                 origem: 'manual',
               },
             }
