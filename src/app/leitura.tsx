@@ -9,10 +9,11 @@ import {
 
 import { useAudioPlayer } from 'expo-audio';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   ActivityIndicator,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,7 +25,7 @@ import {
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 
 import {
   atualizarNomeConferencia,
@@ -108,6 +109,20 @@ export default function LeituraScreen() {
 
   const [itemEditando, setItemEditando] =
     useState<LeituraConferencia | null>(null);
+
+  // Intercepta botão voltar do Android quando o modal de edição está aberto.
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (itemEditando) {
+          setItemEditando(null);
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [itemEditando]),
+  );
 
   // Tempo configurado em Configuracoes (ou o padrao).
   const [tempoBloqueioMs, setTempoBloqueioMs] = useState(
