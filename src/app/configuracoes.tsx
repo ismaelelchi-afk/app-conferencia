@@ -23,6 +23,7 @@ import {
   contarProdutosPorOrigem,
   exportarCatalogo,
   exportarCatalogoExcel,
+  exportarHistoricoExcel,
   importarCatalogoExterno,
   importarCatalogoExcel,
   obterConfiguracao,
@@ -53,6 +54,7 @@ export default function ConfiguracoesScreen() {
   const [reimportando, setReimportando] = useState(false);
   const [importandoExcel, setImportandoExcel] = useState(false);
   const [exportandoExcel, setExportandoExcel] = useState(false);
+  const [exportandoHistoricoExcel, setExportandoHistoricoExcel] = useState(false);
   const [exportandoCatalogo, setExportandoCatalogo] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [apagando, setApagando] = useState(false);
@@ -282,6 +284,34 @@ export default function ConfiguracoesScreen() {
       setMensagem('Não foi possível exportar o catálogo.');
     } finally {
       setExportandoCatalogo(false);
+    }
+  }
+
+  async function exportarHistoricoParaExcel() {
+    if (exportandoHistoricoExcel) return;
+
+    setExportandoHistoricoExcel(true);
+    setMensagem(null);
+
+    try {
+      const base64 = await exportarHistoricoExcel();
+      const nome = `historico-ramsons-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const uri = `${FileSystem.cacheDirectory}${nome}`;
+
+      await FileSystem.writeAsStringAsync(uri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Exportar histórico Excel',
+        UTI: 'com.microsoft.excel.xlsx',
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao exportar.';
+      setMensagem(msg);
+    } finally {
+      setExportandoHistoricoExcel(false);
     }
   }
 
@@ -683,6 +713,28 @@ export default function ConfiguracoesScreen() {
             </View>
 
             {exportandoCatalogo ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={styles.actionArrow}>›</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={[styles.actionCard, exportandoHistoricoExcel && styles.cardDisabled]}
+            onPress={() => { void exportarHistoricoParaExcel(); }}
+            disabled={exportandoHistoricoExcel}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>
+                Exportar histórico para Excel
+              </Text>
+              <Text style={styles.actionText}>
+                Um .xlsx com uma aba por conferência e
+                todos os produtos lidos.
+              </Text>
+            </View>
+
+            {exportandoHistoricoExcel ? (
               <ActivityIndicator size="small" />
             ) : (
               <Text style={styles.actionArrow}>›</Text>

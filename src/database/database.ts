@@ -1481,6 +1481,50 @@ export async function obterDadosExportacaoHistorico(): Promise<
 }
 
 // ============================================================
+// EXPORTAR HISTÓRICO DE CONFERÊNCIAS PARA EXCEL
+// Uma aba por conferência, linhas = produtos lidos.
+// ============================================================
+
+export async function exportarHistoricoExcel(): Promise<string> {
+  const dados = await obterDadosExportacaoHistorico();
+
+  if (dados.length === 0) {
+    throw new Error('Não há conferências finalizadas para exportar.');
+  }
+
+  const workbook = XLSX.utils.book_new();
+
+  for (const { conferencia, leituras } of dados) {
+    const nomePlanilha = conferencia.nome.slice(0, 31).replace(/[\\/*?[\]:]/g, '-');
+
+    const linhas = leituras.map((l) => ({
+      'Código Interno': l.produto.codigoInterno,
+      'Código de Barras': l.produto.codigoBarras ?? '',
+      'Nome': l.produto.nome,
+      'Quantidade': l.quantidade,
+      'Tipo': l.produto.tipoProduto,
+      'Código do Conjunto': l.produto.codigoPar ?? '',
+      'Status': l.status,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(linhas);
+    worksheet['!cols'] = [
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 40 },
+      { wch: 10 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 12 },
+    ];
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, nomePlanilha);
+  }
+
+  return XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' }) as string;
+}
+
+// ============================================================
 // APAGAR TODO O HISTÓRICO FINALIZADO
 // Não afeta conferências em andamento nem o catálogo.
 // ============================================================
