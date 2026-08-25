@@ -94,4 +94,6 @@ export type DadosProdutoRapido = {
   categoria?: string;
   modelo?: string;
   descricao?: string;
+  tipoProduto?: TipoProduto;
+  codigoPar?: string;
 };

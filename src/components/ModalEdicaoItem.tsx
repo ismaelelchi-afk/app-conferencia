@@ -67,8 +67,9 @@ export function ModalEdicaoItem({
 
   // Tipo de produto
   const [tipoLocal, setTipoLocal] = useState<TipoProduto>(
-    item.produto.tipoProduto,
+    item.produto.tipoProduto ?? 'normal',
   );
+  const [codigoPar, setCodigoPar] = useState(item.produto.codigoPar ?? '');
   const [salvandoTipo, setSalvandoTipo] = useState(false);
   const [erroTipo, setErroTipo] = useState<string | null>(null);
 
@@ -186,6 +187,43 @@ export function ModalEdicaoItem({
                 placeholderTextColor="#98A2B3"
               />
 
+              <Text style={styles.editLabel}>TIPO DE PRODUTO</Text>
+              <View style={styles.tipoSelector}>
+                {OPCOES_TIPO.map((opcao) => (
+                  <Pressable
+                    key={opcao.valor}
+                    style={[
+                      styles.tipoOpcao,
+                      tipoLocal === opcao.valor && styles.tipoOpcaoAtiva,
+                    ]}
+                    onPress={() => setTipoLocal(opcao.valor)}
+                  >
+                    <Text
+                      style={[
+                        styles.tipoOpcaoTexto,
+                        tipoLocal === opcao.valor && styles.tipoOpcaoTextoAtivo,
+                      ]}
+                    >
+                      {opcao.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {(tipoLocal === 'evaporadora' || tipoLocal === 'condensadora') && (
+                <>
+                  <Text style={styles.editLabel}>CÓDIGO DO CONJUNTO</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={codigoPar}
+                    onChangeText={setCodigoPar}
+                    placeholder="Ex: AC-SALA-01"
+                    placeholderTextColor="#98A2B3"
+                    autoCapitalize="characters"
+                  />
+                </>
+              )}
+
               <Pressable
                 style={[
                   styles.editSaveButton,
@@ -200,6 +238,8 @@ export function ModalEdicaoItem({
                     categoria: categoria.trim() || undefined,
                     modelo: modelo.trim() || undefined,
                     descricao: descricao.trim() || undefined,
+                    tipoProduto: tipoLocal,
+                    codigoPar: codigoPar.trim() || undefined,
                   })
                 }
               >

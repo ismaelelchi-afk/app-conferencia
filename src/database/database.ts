@@ -884,6 +884,8 @@ export async function completarProdutoDesconhecido(
          categoria = ?,
          modelo = ?,
          descricao = ?,
+         tipo_produto = ?,
+         codigo_par = ?,
          origem = 'manual'
        WHERE codigo_interno = ?;`,
       novoCodigoInterno,
@@ -892,6 +894,8 @@ export async function completarProdutoDesconhecido(
       dados.categoria ?? null,
       dados.modelo ?? null,
       dados.descricao ?? null,
+      dados.tipoProduto ?? 'normal',
+      dados.codigoPar ?? null,
       codigoInternoOriginal,
     );
   });
