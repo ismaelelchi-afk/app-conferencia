@@ -824,34 +824,35 @@ return (
 
       <View style={styles.cameraContainer}>
         {cameraAtiva ? (
-          <CameraView
-            style={styles.camera}
-            facing="back"
-            onBarcodeScanned={
-              processando
-                ? undefined
-                : modoLeitura === 'manual' && !escutandoManual
-                ? undefined
-                : handleBarcodeScanned
-            }
-            barcodeScannerSettings={{
-              barcodeTypes: [
-                'ean13',
-                'ean8',
-                'upc_a',
-                'upc_e',
-                'code128',
-                'code39',
-              ],
-            }}
-          >
-            {/* Cantos do quadro sobrepostos nas bordas da câmera */}
-            <View style={styles.cornerTopLeft} />
-            <View style={styles.cornerTopRight} />
-            <View style={styles.cornerBottomLeft} />
-            <View style={styles.cornerBottomRight} />
-
-          </CameraView>
+          <>
+            <CameraView
+              style={styles.camera}
+              facing="back"
+              onBarcodeScanned={
+                processando
+                  ? undefined
+                  : modoLeitura === 'manual' && !escutandoManual
+                  ? undefined
+                  : handleBarcodeScanned
+              }
+              barcodeScannerSettings={{
+                barcodeTypes: [
+                  'ean13',
+                  'ean8',
+                  'upc_a',
+                  'upc_e',
+                  'code128',
+                  'code39',
+                ],
+              }}
+            />
+            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <View style={styles.cornerTopLeft} />
+              <View style={styles.cornerTopRight} />
+              <View style={styles.cornerBottomLeft} />
+              <View style={styles.cornerBottomRight} />
+            </View>
+          </>
         ) : (
           <Pressable
             style={styles.startScanner}
