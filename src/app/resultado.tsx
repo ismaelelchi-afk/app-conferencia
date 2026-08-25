@@ -350,6 +350,40 @@ export default function ResultadoScreen() {
     }
   }
 
+  async function toggleAC(esAr: boolean): Promise<string | null> {
+    if (!itemEditando || !conferenciaValida) return null;
+
+    try {
+      await atualizarProduto(
+        {
+          ...itemEditando.produto,
+          esArAcondicionado: esAr,
+          codigoBarrasCond: esAr ? itemEditando.produto.codigoBarrasCond : undefined,
+        },
+        itemEditando.produto.codigoInterno,
+      );
+
+      setLeituras((lista) =>
+        lista.map((item) =>
+          item.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? {
+                ...item,
+                produto: {
+                  ...item.produto,
+                  esArAcondicionado: esAr,
+                  codigoBarrasCond: esAr ? item.produto.codigoBarrasCond : undefined,
+                },
+              }
+            : item,
+        ),
+      );
+
+      return null;
+    } catch {
+      return 'Não foi possível salvar a alteração.';
+    }
+  }
+
   async function salvarCond(
     codigoBarrasCond: string,
   ): Promise<string | null> {
@@ -841,6 +875,7 @@ export default function ResultadoScreen() {
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
           onSalvarCond={salvarCond}
+          onToggleAC={toggleAC}
         />
       )}
 

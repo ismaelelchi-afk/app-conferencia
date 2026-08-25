@@ -17,6 +17,7 @@ type Props = {
   onRemover: () => void;
   onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
   onSalvarCond?: (codigoBarrasCond: string) => Promise<string | null>;
+  onToggleAC?: (esAr: boolean) => Promise<string | null>;
 };
 
 export function ModalEdicaoItem({
@@ -26,6 +27,7 @@ export function ModalEdicaoItem({
   onRemover,
   onSalvarProdutoNovo,
   onSalvarCond,
+  onToggleAC,
 }: Props) {
   const [quantidadeTexto, setQuantidadeTexto] = useState(
     String(item.quantidade),
@@ -42,6 +44,10 @@ export function ModalEdicaoItem({
   const [modelo, setModelo] = useState(item.produto.modelo ?? '');
   const [descricao, setDescricao] = useState(item.produto.descricao ?? '');
 
+  const [esArLocal, setEsArLocal] = useState(item.produto.esArAcondicionado);
+  const [salvandoAC, setSalvandoAC] = useState(false);
+  const [erroAC, setErroAC] = useState<string | null>(null);
+
   const [novaCondBarras, setNovaCondBarras] = useState(
     item.produto.codigoBarrasCond ?? '',
   );
@@ -49,8 +55,23 @@ export function ModalEdicaoItem({
   const [erroCond, setErroCond] = useState<string | null>(null);
 
   const ehDesconhecido = item.status === 'desconhecido';
-  const ehAr = item.produto.esArAcondicionado;
   const nomeValido = nome.trim().length >= 3;
+
+  async function handleToggleAC() {
+    if (!onToggleAC || salvandoAC) return;
+
+    const novoValor = !esArLocal;
+    setSalvandoAC(true);
+    setErroAC(null);
+
+    const erro = await onToggleAC(novoValor);
+    if (erro) {
+      setErroAC(erro);
+    } else {
+      setEsArLocal(novoValor);
+    }
+    setSalvandoAC(false);
+  }
 
   async function handleSalvarCond() {
     if (!onSalvarCond || salvandoCond) return;
@@ -71,120 +92,15 @@ export function ModalEdicaoItem({
       <View style={styles.editCard}>
         <ScrollView showsVerticalScrollIndicator={false}>
 
-          {/* Código de barras VAP */}
+          {/* Código de barras VAP (ou normal) */}
           <View style={styles.barcodeBox}>
             <Text style={styles.barcodeBoxLabel}>
-              {ehAr ? 'CÓDIGO DE BARRAS VAP' : 'CÓDIGO DE BARRAS'}
+              {esArLocal ? 'CÓDIGO DE BARRAS VAP' : 'CÓDIGO DE BARRAS'}
             </Text>
             <Text style={styles.barcodeBoxValue}>
               {item.produto.codigoBarras || 'sem código de barras'}
             </Text>
           </View>
-
-          {/* Seção de ar condicionado */}
-          {ehAr && !ehDesconhecido && (
-            <View style={styles.acSection}>
-              <Text style={styles.acSectionTitle}>❄ CONJUNTO VAP + COND</Text>
-
-              <View style={styles.acRow}>
-                <View style={styles.acParteInfo}>
-                  <Text style={styles.acParteTitulo}>VAP / Evaporadora</Text>
-                  <Text style={styles.acParteBarcode}>
-                    {item.produto.codigoBarras || 'sem código'}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.acStatus,
-                    item.vapLida ? styles.acStatusOk : styles.acStatusPend,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.acStatusText,
-                      item.vapLida
-                        ? styles.acStatusTextOk
-                        : styles.acStatusTextPend,
-                    ]}
-                  >
-                    {item.vapLida ? '✅ Conferida' : '⏳ Pendente'}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={[styles.acRow, { marginTop: 8 }]}>
-                <View style={styles.acParteInfo}>
-                  <Text style={styles.acParteTitulo}>COND / Condensadora</Text>
-                  <Text style={styles.acParteBarcode}>
-                    {item.produto.codigoBarrasCond || 'Não cadastrada'}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.acStatus,
-                    item.condLida ? styles.acStatusOk : styles.acStatusPend,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.acStatusText,
-                      item.condLida
-                        ? styles.acStatusTextOk
-                        : styles.acStatusTextPend,
-                    ]}
-                  >
-                    {item.condLida
-                      ? '✅ Conferida'
-                      : item.produto.codigoBarrasCond
-                      ? '⏳ Pendente'
-                      : '— Não cadastrada'}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Editar COND */}
-              {onSalvarCond && (
-                <>
-                  <Text style={styles.editLabel}>CÓDIGO BARRAS COND</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={novaCondBarras}
-                    onChangeText={(v) => {
-                      setNovaCondBarras(v);
-                      setErroCond(null);
-                    }}
-                    placeholder={
-                      item.produto.codigoBarrasCond || 'Não cadastrada'
-                    }
-                    placeholderTextColor="#98A2B3"
-                    keyboardType="number-pad"
-                    editable={!salvandoCond}
-                  />
-
-                  {erroCond ? (
-                    <Text style={styles.erroText}>{erroCond}</Text>
-                  ) : null}
-
-                  <Pressable
-                    style={[
-                      styles.editSaveButton,
-                      styles.editSaveButtonCond,
-                      (!novaCondBarras.trim() || salvandoCond) &&
-                        styles.editButtonDisabled,
-                    ]}
-                    disabled={!novaCondBarras.trim() || salvandoCond}
-                    onPress={() => { void handleSalvarCond(); }}
-                  >
-                    <Text style={styles.editSaveButtonText}>
-                      SALVAR COND
-                    </Text>
-                  </Pressable>
-                </>
-              )}
-
-              <View style={styles.editDivider} />
-            </View>
-          )}
 
           {ehDesconhecido ? (
             <>
@@ -274,7 +190,155 @@ export function ModalEdicaoItem({
               <View style={styles.editDivider} />
             </>
           ) : (
-            <Text style={styles.editTitle}>{item.produto.nome}</Text>
+            <>
+              <Text style={styles.editTitle}>{item.produto.nome}</Text>
+
+              {/* Toggle AC — disponível para qualquer produto identificado */}
+              {onToggleAC && (
+                <>
+                  <Text style={styles.editLabel}>TIPO DE PRODUTO</Text>
+                  <Pressable
+                    style={[
+                      styles.toggleRow,
+                      esArLocal && styles.toggleRowAtivo,
+                      salvandoAC && styles.toggleRowDesabilitado,
+                    ]}
+                    onPress={() => { void handleToggleAC(); }}
+                    disabled={salvandoAC}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        esArLocal && styles.checkboxAtivo,
+                      ]}
+                    >
+                      {esArLocal && (
+                        <Text style={styles.checkboxCheck}>✓</Text>
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.toggleLabel,
+                        esArLocal && styles.toggleLabelAtivo,
+                      ]}
+                    >
+                      {esArLocal
+                        ? '❄ Ar condicionado (VAP + COND)'
+                        : 'É ar condicionado?'}
+                    </Text>
+                  </Pressable>
+
+                  {erroAC ? (
+                    <Text style={styles.erroText}>{erroAC}</Text>
+                  ) : null}
+                </>
+              )}
+
+              {/* Seção VAP + COND (só quando AC) */}
+              {esArLocal && (
+                <View style={styles.acSection}>
+                  <Text style={styles.acSectionTitle}>❄ CONJUNTO VAP + COND</Text>
+
+                  <View style={styles.acRow}>
+                    <View style={styles.acParteInfo}>
+                      <Text style={styles.acParteTitulo}>VAP / Evaporadora</Text>
+                      <Text style={styles.acParteBarcode}>
+                        {item.produto.codigoBarras || 'sem código'}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.acStatus,
+                        item.vapLida ? styles.acStatusOk : styles.acStatusPend,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.acStatusText,
+                          item.vapLida
+                            ? styles.acStatusTextOk
+                            : styles.acStatusTextPend,
+                        ]}
+                      >
+                        {item.vapLida ? '✅ Conferida' : '⏳ Pendente'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.acRow, { marginTop: 8 }]}>
+                    <View style={styles.acParteInfo}>
+                      <Text style={styles.acParteTitulo}>COND / Condensadora</Text>
+                      <Text style={styles.acParteBarcode}>
+                        {item.produto.codigoBarrasCond || 'Não cadastrada'}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.acStatus,
+                        item.condLida ? styles.acStatusOk : styles.acStatusPend,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.acStatusText,
+                          item.condLida
+                            ? styles.acStatusTextOk
+                            : styles.acStatusTextPend,
+                        ]}
+                      >
+                        {item.condLida
+                          ? '✅ Conferida'
+                          : item.produto.codigoBarrasCond
+                          ? '⏳ Pendente'
+                          : '— Não cadastrada'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Editar COND */}
+                  {onSalvarCond && (
+                    <>
+                      <Text style={styles.editLabel}>CÓDIGO BARRAS COND</Text>
+                      <TextInput
+                        style={styles.editInput}
+                        value={novaCondBarras}
+                        onChangeText={(v) => {
+                          setNovaCondBarras(v);
+                          setErroCond(null);
+                        }}
+                        placeholder={
+                          item.produto.codigoBarrasCond || 'Não cadastrada'
+                        }
+                        placeholderTextColor="#98A2B3"
+                        keyboardType="number-pad"
+                        editable={!salvandoCond}
+                      />
+
+                      {erroCond ? (
+                        <Text style={styles.erroText}>{erroCond}</Text>
+                      ) : null}
+
+                      <Pressable
+                        style={[
+                          styles.editSaveButton,
+                          styles.editSaveButtonCond,
+                          (!novaCondBarras.trim() || salvandoCond) &&
+                            styles.editButtonDisabled,
+                        ]}
+                        disabled={!novaCondBarras.trim() || salvandoCond}
+                        onPress={() => { void handleSalvarCond(); }}
+                      >
+                        <Text style={styles.editSaveButtonText}>
+                          SALVAR COND
+                        </Text>
+                      </Pressable>
+                    </>
+                  )}
+                </View>
+              )}
+
+              <View style={styles.editDivider} />
+            </>
           )}
 
           <Text style={styles.editLabel}>QUANTIDADE</Text>
@@ -348,10 +412,65 @@ const styles = StyleSheet.create({
     color: '#344054',
   },
 
+  // Toggle AC
+  toggleRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    backgroundColor: '#FAFAFA',
+  },
+
+  toggleRowAtivo: {
+    borderColor: '#B2DDFF',
+    backgroundColor: '#F0F9FF',
+  },
+
+  toggleRowDesabilitado: {
+    opacity: 0.6,
+  },
+
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#D0D5DD',
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  checkboxAtivo: {
+    backgroundColor: '#208AEF',
+    borderColor: '#208AEF',
+  },
+
+  checkboxCheck: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+
+  toggleLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#667085',
+    flex: 1,
+  },
+
+  toggleLabelAtivo: {
+    color: '#175CD3',
+    fontWeight: '700',
+  },
+
   // Seção AC
   acSection: {
-    marginTop: 8,
-    marginBottom: 4,
+    marginTop: 10,
     padding: 12,
     borderRadius: 12,
     backgroundColor: '#F0F9FF',
