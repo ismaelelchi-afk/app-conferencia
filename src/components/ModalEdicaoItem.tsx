@@ -27,7 +27,7 @@ type Props = {
   onFechar: () => void;
   onSalvarQuantidade: (novaQuantidade: number) => void;
   onRemover: () => void;
-  onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
+  onSalvarProdutoNovo: (dados: DadosProdutoRapido) => Promise<void>;
   onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
   onSalvarDadosProduto?: (dados: DadosProduto) => Promise<string | null>;
   itensConferencia?: LeituraConferencia[];
@@ -70,6 +70,8 @@ export function ModalEdicaoItem({
   const [descricao, setDescricao] = useState(item.produto.descricao ?? '');
   const [salvandoDados, setSalvandoDados] = useState(false);
   const [erroDados, setErroDados] = useState<string | null>(null);
+  const [salvandoNovo, setSalvandoNovo] = useState(false);
+  const [erroNovo, setErroNovo] = useState<string | null>(null);
 
   // Tipo de produto
   const [tipoLocal, setTipoLocal] = useState<TipoProduto>(
@@ -150,6 +152,27 @@ export function ModalEdicaoItem({
     setSalvandoTipo(false);
   }
 
+  async function handleSalvarNovo() {
+    if (salvandoNovo || !nomeValido) return;
+    setSalvandoNovo(true);
+    setErroNovo(null);
+    try {
+      await onSalvarProdutoNovo({
+        nome: nome.trim(),
+        marca: marca.trim() || undefined,
+        categoria: categoria.trim() || undefined,
+        modelo: modelo.trim() || undefined,
+        descricao: descricao.trim() || undefined,
+        tipoProduto: tipoLocal,
+        codigoPar: codigoPar.trim() || undefined,
+      });
+    } catch {
+      setErroNovo('Não foi possível salvar. Tente novamente.');
+    } finally {
+      setSalvandoNovo(false);
+    }
+  }
+
   async function handleSalvarDados() {
     if (!onSalvarDadosProduto || salvandoDados || !nomeValido) return;
 
@@ -227,16 +250,6 @@ export function ModalEdicaoItem({
                 placeholderTextColor="#98A2B3"
               />
 
-              <Text style={styles.editLabel}>CÓDIGO INTERNO</Text>
-              <TextInput
-                style={styles.editInput}
-                value={codigoInterno}
-                onChangeText={setCodigoInterno}
-                placeholder="Gerado automaticamente"
-                placeholderTextColor="#98A2B3"
-                autoCapitalize="characters"
-              />
-
               <Text style={styles.editLabel}>DESCRIÇÃO</Text>
               <TextInput
                 style={styles.editInput}
@@ -283,27 +296,20 @@ export function ModalEdicaoItem({
                 </>
               )}
 
+              {erroNovo ? (
+                <Text style={styles.erroText}>{erroNovo}</Text>
+              ) : null}
+
               <Pressable
                 style={[
                   styles.editSaveButton,
-                  !nomeValido && styles.editButtonDisabled,
+                  (!nomeValido || salvandoNovo) && styles.editButtonDisabled,
                 ]}
-                disabled={!nomeValido}
-                onPress={() =>
-                  onSalvarProdutoNovo({
-                    codigoInterno: codigoInterno.trim() || undefined,
-                    nome: nome.trim(),
-                    marca: marca.trim() || undefined,
-                    categoria: categoria.trim() || undefined,
-                    modelo: modelo.trim() || undefined,
-                    descricao: descricao.trim() || undefined,
-                    tipoProduto: tipoLocal,
-                    codigoPar: codigoPar.trim() || undefined,
-                  })
-                }
+                disabled={!nomeValido || salvandoNovo}
+                onPress={() => { void handleSalvarNovo(); }}
               >
                 <Text style={styles.editSaveButtonText}>
-                  SALVAR COMO PRODUTO NOVO
+                  {salvandoNovo ? 'SALVANDO...' : 'SALVAR COMO PRODUTO NOVO'}
                 </Text>
               </Pressable>
 

@@ -308,46 +308,36 @@ export default function ResultadoScreen() {
     }
   }
 
-  async function salvarComoProdutoNovo(dados: DadosProdutoRapido) {
-    if (!itemEditando || !conferenciaValida) {
-      return;
-    }
+  async function salvarComoProdutoNovo(dados: DadosProdutoRapido): Promise<void> {
+    if (!itemEditando || !conferenciaValida) return;
 
-    try {
-      await completarProdutoDesconhecido(
-        itemEditando.produto.codigoInterno,
-        dados,
-      );
+    const novoCodigoInterno = await completarProdutoDesconhecido(
+      itemEditando.produto.codigoInterno,
+      dados,
+    );
 
-      await atualizarStatusLeitura(
-        conferenciaId,
-        itemEditando.produto.codigoInterno,
-        'novo',
-      );
+    await atualizarStatusLeitura(conferenciaId, novoCodigoInterno, 'novo');
 
-      setLeituras((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno ===
-          itemEditando.produto.codigoInterno
-            ? {
-                ...item,
-                status: 'novo' as StatusLeitura,
-                produto: {
-                  ...item.produto,
-                  nome: dados.nome,
-                  marca: dados.marca,
-                  categoria: dados.categoria,
-                  origem: 'manual',
-                },
-              }
-            : item,
-        ),
-      );
+    setLeituras((lista) =>
+      lista.map((item) =>
+        item.produto.codigoInterno === itemEditando.produto.codigoInterno
+          ? {
+              ...item,
+              status: 'novo' as StatusLeitura,
+              produto: {
+                ...item.produto,
+                codigoInterno: novoCodigoInterno,
+                nome: dados.nome,
+                marca: dados.marca,
+                categoria: dados.categoria,
+                origem: 'manual',
+              },
+            }
+          : item,
+      ),
+    );
 
-      fecharEdicao();
-    } catch (error) {
-      console.error('Erro ao salvar produto novo:', error);
-    }
+    fecharEdicao();
   }
 
   async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {

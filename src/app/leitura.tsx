@@ -519,51 +519,38 @@ function abrirEdicao(item: LeituraConferencia) {
     }
   }
 
-  async function salvarComoProdutoNovo(
-    dados: DadosProdutoRapido,
-  ) {
-    if (!itemEditando || !conferenciaValida) {
-      return;
-    }
+  async function salvarComoProdutoNovo(dados: DadosProdutoRapido): Promise<void> {
+    if (!itemEditando || !conferenciaValida) return;
 
-    try {
-      const novoCodigoInterno = await completarProdutoDesconhecido(
-        itemEditando.produto.codigoInterno,
-        dados,
-      );
+    const novoCodigoInterno = await completarProdutoDesconhecido(
+      itemEditando.produto.codigoInterno,
+      dados,
+    );
 
-      await atualizarStatusLeitura(
-        conferenciaId,
-        novoCodigoInterno,
-        'novo',
-      );
+    await atualizarStatusLeitura(conferenciaId, novoCodigoInterno, 'novo');
 
-      setProdutos((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno ===
-          itemEditando.produto.codigoInterno
-            ? {
-                ...item,
-                status: 'novo',
-                produto: {
-                  ...item.produto,
-                  codigoInterno: novoCodigoInterno,
-                  nome: dados.nome,
-                  marca: dados.marca,
-                  categoria: dados.categoria,
-                  modelo: dados.modelo,
-                  descricao: dados.descricao,
-                  origem: 'manual',
-                },
-              }
-            : item,
-        ),
-      );
+    setProdutos((lista) =>
+      lista.map((item) =>
+        item.produto.codigoInterno === itemEditando.produto.codigoInterno
+          ? {
+              ...item,
+              status: 'novo',
+              produto: {
+                ...item.produto,
+                codigoInterno: novoCodigoInterno,
+                nome: dados.nome,
+                marca: dados.marca,
+                categoria: dados.categoria,
+                modelo: dados.modelo,
+                descricao: dados.descricao,
+                origem: 'manual',
+              },
+            }
+          : item,
+      ),
+    );
 
-      fecharEdicao();
-    } catch (error) {
-      console.error('Erro ao salvar produto novo:', error);
-    }
+    fecharEdicao();
   }
 
   async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {
