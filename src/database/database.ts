@@ -804,6 +804,67 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
 // no mesmo formato aceito por importarCatalogoExterno.
 // ============================================================
 
+// ============================================================
+// EXPORTAR CATÁLOGO PARA EXCEL (.xlsx)
+// Retorna base64 do arquivo para ser salvo e compartilhado.
+// ============================================================
+
+export async function exportarCatalogoExcel(): Promise<string> {
+  const db = await obterDatabase();
+
+  const rows = await db.getAllAsync<{
+    codigo_interno: string;
+    codigo_barras: string | null;
+    nome: string;
+    marca: string | null;
+    categoria: string | null;
+    modelo: string | null;
+    descricao: string | null;
+    tipo_produto: string;
+    codigo_par: string | null;
+    origem: string;
+  }>(`
+    SELECT codigo_interno, codigo_barras, nome, marca, categoria, modelo,
+           descricao, tipo_produto, codigo_par, origem
+    FROM produtos
+    WHERE ativo = 1
+    ORDER BY nome COLLATE NOCASE ASC;
+  `);
+
+  const dados = rows.map((r) => ({
+    'Código Interno': r.codigo_interno,
+    'Código de Barras': r.codigo_barras ?? '',
+    'Nome': r.nome,
+    'Marca': r.marca ?? '',
+    'Categoria': r.categoria ?? '',
+    'Modelo': r.modelo ?? '',
+    'Descrição': r.descricao ?? '',
+    'Tipo': r.tipo_produto,
+    'Código do Conjunto': r.codigo_par ?? '',
+    'Origem': r.origem,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(dados);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Produtos');
+
+  // Ajusta largura das colunas
+  worksheet['!cols'] = [
+    { wch: 16 }, // Código Interno
+    { wch: 18 }, // Código de Barras
+    { wch: 40 }, // Nome
+    { wch: 18 }, // Marca
+    { wch: 18 }, // Categoria
+    { wch: 18 }, // Modelo
+    { wch: 30 }, // Descrição
+    { wch: 14 }, // Tipo
+    { wch: 18 }, // Código do Conjunto
+    { wch: 12 }, // Origem
+  ];
+
+  return XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' }) as string;
+}
+
 export async function exportarCatalogo(): Promise<string> {
   const db = await obterDatabase();
 

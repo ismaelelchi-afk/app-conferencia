@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -21,6 +22,7 @@ import {
   contarProdutos,
   contarProdutosPorOrigem,
   exportarCatalogo,
+  exportarCatalogoExcel,
   importarCatalogoExterno,
   importarCatalogoExcel,
   obterConfiguracao,
@@ -50,6 +52,7 @@ export default function ConfiguracoesScreen() {
 
   const [reimportando, setReimportando] = useState(false);
   const [importandoExcel, setImportandoExcel] = useState(false);
+  const [exportandoExcel, setExportandoExcel] = useState(false);
   const [exportandoCatalogo, setExportandoCatalogo] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [apagando, setApagando] = useState(false);
@@ -230,6 +233,34 @@ export default function ConfiguracoesScreen() {
       setMensagem(msg);
     } finally {
       setImportandoExcel(false);
+    }
+  }
+
+  async function exportarCatalogoParaExcel() {
+    if (exportandoExcel) return;
+
+    setExportandoExcel(true);
+    setMensagem(null);
+
+    try {
+      const base64 = await exportarCatalogoExcel();
+      const nome = `catalogo-ramsons-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const uri = `${FileSystem.cacheDirectory}${nome}`;
+
+      await FileSystem.writeAsStringAsync(uri, base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        dialogTitle: 'Exportar catálogo Excel',
+        UTI: 'com.microsoft.excel.xlsx',
+      });
+    } catch (error) {
+      console.error('Erro ao exportar Excel:', error);
+      setMensagem('Não foi possível exportar o Excel.');
+    } finally {
+      setExportandoExcel(false);
     }
   }
 
@@ -578,6 +609,28 @@ export default function ConfiguracoesScreen() {
             </View>
 
             {importandoExcel ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={styles.actionArrow}>›</Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={[styles.actionCard, exportandoExcel && styles.cardDisabled]}
+            onPress={() => { void exportarCatalogoParaExcel(); }}
+            disabled={exportandoExcel}
+          >
+            <View style={styles.actionInfo}>
+              <Text style={styles.actionTitle}>
+                Exportar catálogo para Excel
+              </Text>
+              <Text style={styles.actionText}>
+                Baixa um .xlsx com todos os produtos,
+                marcas, categorias e tipos.
+              </Text>
+            </View>
+
+            {exportandoExcel ? (
               <ActivityIndicator size="small" />
             ) : (
               <Text style={styles.actionArrow}>›</Text>
