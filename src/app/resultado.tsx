@@ -729,7 +729,10 @@ export default function ResultadoScreen() {
             <>
               {/* Pares agrupados */}
               {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
-                const ambosPresentes = items.length === 2;
+                const ambosPresentes =
+                  items.some((i) => i.produto.tipoProduto === 'evaporadora') &&
+                  items.some((i) => i.produto.tipoProduto === 'condensadora') &&
+                  items.length === 2;
                 return (
                   <View key={`par-${codigoPar}`}>
                     <View style={styles.parHeader}>
