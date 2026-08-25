@@ -8,7 +8,19 @@ import {
   View,
 } from 'react-native';
 
-import type { DadosProdutoRapido, LeituraConferencia } from '@/models/produto';
+import type {
+  DadosProdutoRapido,
+  LeituraConferencia,
+  TipoProduto,
+} from '@/models/produto';
+
+type DadosProduto = {
+  nome: string;
+  marca?: string;
+  categoria?: string;
+  modelo?: string;
+  descricao?: string;
+};
 
 type Props = {
   item: LeituraConferencia;
@@ -17,8 +29,15 @@ type Props = {
   onRemover: () => void;
   onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
   onSalvarCond?: (codigoBarrasCond: string) => Promise<string | null>;
-  onToggleAC?: (esAr: boolean) => Promise<string | null>;
+  onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
+  onSalvarDadosProduto?: (dados: DadosProduto) => Promise<string | null>;
 };
+
+const OPCOES_TIPO: { valor: TipoProduto; label: string }[] = [
+  { valor: 'normal', label: 'Normal' },
+  { valor: 'evaporadora', label: 'Evaporadora' },
+  { valor: 'condensadora', label: 'Condensadora' },
+];
 
 export function ModalEdicaoItem({
   item,
@@ -27,12 +46,14 @@ export function ModalEdicaoItem({
   onRemover,
   onSalvarProdutoNovo,
   onSalvarCond,
-  onToggleAC,
+  onAtualizarTipo,
+  onSalvarDadosProduto,
 }: Props) {
   const [quantidadeTexto, setQuantidadeTexto] = useState(
     String(item.quantidade),
   );
 
+  // Campos para produto desconhecido
   const [codigoInterno, setCodigoInterno] = useState(
     item.produto.codigoInterno,
   );
@@ -43,11 +64,17 @@ export function ModalEdicaoItem({
   const [categoria, setCategoria] = useState(item.produto.categoria ?? '');
   const [modelo, setModelo] = useState(item.produto.modelo ?? '');
   const [descricao, setDescricao] = useState(item.produto.descricao ?? '');
+  const [salvandoDados, setSalvandoDados] = useState(false);
+  const [erroDados, setErroDados] = useState<string | null>(null);
 
-  const [esArLocal, setEsArLocal] = useState(item.produto.esArAcondicionado);
-  const [salvandoAC, setSalvandoAC] = useState(false);
-  const [erroAC, setErroAC] = useState<string | null>(null);
+  // Tipo de produto
+  const [tipoLocal, setTipoLocal] = useState<TipoProduto>(
+    item.produto.tipoProduto,
+  );
+  const [salvandoTipo, setSalvandoTipo] = useState(false);
+  const [erroTipo, setErroTipo] = useState<string | null>(null);
 
+  // COND barcode
   const [novaCondBarras, setNovaCondBarras] = useState(
     item.produto.codigoBarrasCond ?? '',
   );
@@ -57,20 +84,39 @@ export function ModalEdicaoItem({
   const ehDesconhecido = item.status === 'desconhecido';
   const nomeValido = nome.trim().length >= 3;
 
-  async function handleToggleAC() {
-    if (!onToggleAC || salvandoAC) return;
+  async function handleSelecionarTipo(tipo: TipoProduto) {
+    if (!onAtualizarTipo || salvandoTipo || tipo === tipoLocal) return;
 
-    const novoValor = !esArLocal;
-    setSalvandoAC(true);
-    setErroAC(null);
+    setSalvandoTipo(true);
+    setErroTipo(null);
 
-    const erro = await onToggleAC(novoValor);
+    const erro = await onAtualizarTipo(tipo);
     if (erro) {
-      setErroAC(erro);
+      setErroTipo(erro);
     } else {
-      setEsArLocal(novoValor);
+      setTipoLocal(tipo);
     }
-    setSalvandoAC(false);
+    setSalvandoTipo(false);
+  }
+
+  async function handleSalvarDados() {
+    if (!onSalvarDadosProduto || salvandoDados || !nomeValido) return;
+
+    setSalvandoDados(true);
+    setErroDados(null);
+
+    const erro = await onSalvarDadosProduto({
+      nome: nome.trim(),
+      marca: marca.trim() || undefined,
+      categoria: categoria.trim() || undefined,
+      modelo: modelo.trim() || undefined,
+      descricao: descricao.trim() || undefined,
+    });
+
+    if (erro) {
+      setErroDados(erro);
+    }
+    setSalvandoDados(false);
   }
 
   async function handleSalvarCond() {
@@ -92,11 +138,9 @@ export function ModalEdicaoItem({
       <View style={styles.editCard}>
         <ScrollView showsVerticalScrollIndicator={false}>
 
-          {/* Código de barras VAP (ou normal) */}
+          {/* Código de barras */}
           <View style={styles.barcodeBox}>
-            <Text style={styles.barcodeBoxLabel}>
-              {esArLocal ? 'CÓDIGO DE BARRAS VAP' : 'CÓDIGO DE BARRAS'}
-            </Text>
+            <Text style={styles.barcodeBoxLabel}>CÓDIGO DE BARRAS</Text>
             <Text style={styles.barcodeBoxValue}>
               {item.produto.codigoBarras || 'sem código de barras'}
             </Text>
@@ -193,148 +237,145 @@ export function ModalEdicaoItem({
             <>
               <Text style={styles.editTitle}>{item.produto.nome}</Text>
 
-              {/* Toggle AC — disponível para qualquer produto identificado */}
-              {onToggleAC && (
+              {/* Dados editáveis do produto */}
+              {onSalvarDadosProduto && (
                 <>
-                  <Text style={styles.editLabel}>TIPO DE PRODUTO</Text>
+                  <Text style={styles.editLabel}>NOME</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={nome}
+                    onChangeText={(v) => { setNome(v); setErroDados(null); }}
+                    placeholder="Nome do produto"
+                    placeholderTextColor="#98A2B3"
+                    editable={!salvandoDados}
+                  />
+
+                  <Text style={styles.editLabel}>MARCA</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={marca}
+                    onChangeText={setMarca}
+                    placeholder="Opcional"
+                    placeholderTextColor="#98A2B3"
+                    editable={!salvandoDados}
+                  />
+
+                  <Text style={styles.editLabel}>CATEGORIA</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={categoria}
+                    onChangeText={setCategoria}
+                    placeholder="Opcional"
+                    placeholderTextColor="#98A2B3"
+                    editable={!salvandoDados}
+                  />
+
+                  <Text style={styles.editLabel}>MODELO</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={modelo}
+                    onChangeText={setModelo}
+                    placeholder="Opcional"
+                    placeholderTextColor="#98A2B3"
+                    editable={!salvandoDados}
+                  />
+
+                  {erroDados ? (
+                    <Text style={styles.erroText}>{erroDados}</Text>
+                  ) : null}
+
                   <Pressable
                     style={[
-                      styles.toggleRow,
-                      esArLocal && styles.toggleRowAtivo,
-                      salvandoAC && styles.toggleRowDesabilitado,
+                      styles.editSaveButton,
+                      styles.editSaveButtonSecundario,
+                      (!nomeValido || salvandoDados) && styles.editButtonDisabled,
                     ]}
-                    onPress={() => { void handleToggleAC(); }}
-                    disabled={salvandoAC}
+                    disabled={!nomeValido || salvandoDados}
+                    onPress={() => { void handleSalvarDados(); }}
                   >
-                    <View
-                      style={[
-                        styles.checkbox,
-                        esArLocal && styles.checkboxAtivo,
-                      ]}
-                    >
-                      {esArLocal && (
-                        <Text style={styles.checkboxCheck}>✓</Text>
-                      )}
-                    </View>
-                    <Text
-                      style={[
-                        styles.toggleLabel,
-                        esArLocal && styles.toggleLabelAtivo,
-                      ]}
-                    >
-                      {esArLocal
-                        ? '❄ Ar condicionado (VAP + COND)'
-                        : 'É ar condicionado?'}
+                    <Text style={styles.editSaveButtonText}>
+                      SALVAR DADOS DO PRODUTO
                     </Text>
                   </Pressable>
+                </>
+              )}
 
-                  {erroAC ? (
-                    <Text style={styles.erroText}>{erroAC}</Text>
+              {/* Tipo de produto */}
+              {onAtualizarTipo && (
+                <>
+                  <Text style={styles.editLabel}>TIPO DE PRODUTO</Text>
+                  <View
+                    style={[
+                      styles.tipoSelector,
+                      salvandoTipo && styles.tipoSelectorDesabilitado,
+                    ]}
+                  >
+                    {OPCOES_TIPO.map((opcao) => (
+                      <Pressable
+                        key={opcao.valor}
+                        style={[
+                          styles.tipoOpcao,
+                          tipoLocal === opcao.valor && styles.tipoOpcaoAtiva,
+                        ]}
+                        onPress={() => { void handleSelecionarTipo(opcao.valor); }}
+                        disabled={salvandoTipo}
+                      >
+                        <Text
+                          style={[
+                            styles.tipoOpcaoTexto,
+                            tipoLocal === opcao.valor && styles.tipoOpcaoTextoAtivo,
+                          ]}
+                        >
+                          {opcao.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  {erroTipo ? (
+                    <Text style={styles.erroText}>{erroTipo}</Text>
                   ) : null}
                 </>
               )}
 
-              {/* Seção VAP + COND (só quando AC) */}
-              {esArLocal && (
-                <View style={styles.acSection}>
-                  <Text style={styles.acSectionTitle}>❄ CONJUNTO VAP + COND</Text>
+              {/* Código barras COND (só quando Evaporadora) */}
+              {tipoLocal === 'evaporadora' && onSalvarCond && (
+                <>
+                  <Text style={styles.editLabel}>CÓDIGO BARRAS COND</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={novaCondBarras}
+                    onChangeText={(v) => {
+                      setNovaCondBarras(v);
+                      setErroCond(null);
+                    }}
+                    placeholder={
+                      item.produto.codigoBarrasCond || 'Não cadastrada'
+                    }
+                    placeholderTextColor="#98A2B3"
+                    keyboardType="number-pad"
+                    editable={!salvandoCond}
+                  />
 
-                  <View style={styles.acRow}>
-                    <View style={styles.acParteInfo}>
-                      <Text style={styles.acParteTitulo}>VAP / Evaporadora</Text>
-                      <Text style={styles.acParteBarcode}>
-                        {item.produto.codigoBarras || 'sem código'}
-                      </Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.acStatus,
-                        item.vapLida ? styles.acStatusOk : styles.acStatusPend,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.acStatusText,
-                          item.vapLida
-                            ? styles.acStatusTextOk
-                            : styles.acStatusTextPend,
-                        ]}
-                      >
-                        {item.vapLida ? '✅ Conferida' : '⏳ Pendente'}
-                      </Text>
-                    </View>
-                  </View>
+                  {erroCond ? (
+                    <Text style={styles.erroText}>{erroCond}</Text>
+                  ) : null}
 
-                  <View style={[styles.acRow, { marginTop: 8 }]}>
-                    <View style={styles.acParteInfo}>
-                      <Text style={styles.acParteTitulo}>COND / Condensadora</Text>
-                      <Text style={styles.acParteBarcode}>
-                        {item.produto.codigoBarrasCond || 'Não cadastrada'}
-                      </Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.acStatus,
-                        item.condLida ? styles.acStatusOk : styles.acStatusPend,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.acStatusText,
-                          item.condLida
-                            ? styles.acStatusTextOk
-                            : styles.acStatusTextPend,
-                        ]}
-                      >
-                        {item.condLida
-                          ? '✅ Conferida'
-                          : item.produto.codigoBarrasCond
-                          ? '⏳ Pendente'
-                          : '— Não cadastrada'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Editar COND */}
-                  {onSalvarCond && (
-                    <>
-                      <Text style={styles.editLabel}>CÓDIGO BARRAS COND</Text>
-                      <TextInput
-                        style={styles.editInput}
-                        value={novaCondBarras}
-                        onChangeText={(v) => {
-                          setNovaCondBarras(v);
-                          setErroCond(null);
-                        }}
-                        placeholder={
-                          item.produto.codigoBarrasCond || 'Não cadastrada'
-                        }
-                        placeholderTextColor="#98A2B3"
-                        keyboardType="number-pad"
-                        editable={!salvandoCond}
-                      />
-
-                      {erroCond ? (
-                        <Text style={styles.erroText}>{erroCond}</Text>
-                      ) : null}
-
-                      <Pressable
-                        style={[
-                          styles.editSaveButton,
-                          styles.editSaveButtonCond,
-                          (!novaCondBarras.trim() || salvandoCond) &&
-                            styles.editButtonDisabled,
-                        ]}
-                        disabled={!novaCondBarras.trim() || salvandoCond}
-                        onPress={() => { void handleSalvarCond(); }}
-                      >
-                        <Text style={styles.editSaveButtonText}>
-                          SALVAR COND
-                        </Text>
-                      </Pressable>
-                    </>
-                  )}
-                </View>
+                  <Pressable
+                    style={[
+                      styles.editSaveButton,
+                      styles.editSaveButtonCond,
+                      (!novaCondBarras.trim() || salvandoCond) &&
+                        styles.editButtonDisabled,
+                    ]}
+                    disabled={!novaCondBarras.trim() || salvandoCond}
+                    onPress={() => { void handleSalvarCond(); }}
+                  >
+                    <Text style={styles.editSaveButtonText}>
+                      SALVAR COND
+                    </Text>
+                  </Pressable>
+                </>
               )}
 
               <View style={styles.editDivider} />
@@ -412,128 +453,40 @@ const styles = StyleSheet.create({
     color: '#344054',
   },
 
-  // Toggle AC
-  toggleRow: {
+  // Tipo de produto selector
+  tipoSelector: {
     marginTop: 8,
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E1E5EA',
-    backgroundColor: '#FAFAFA',
+    overflow: 'hidden',
   },
 
-  toggleRowAtivo: {
-    borderColor: '#B2DDFF',
-    backgroundColor: '#F0F9FF',
-  },
-
-  toggleRowDesabilitado: {
+  tipoSelectorDesabilitado: {
     opacity: 0.6,
   },
 
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
-    borderWidth: 2,
-    borderColor: '#D0D5DD',
-    marginRight: 10,
+  tipoOpcao: {
+    flex: 1,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#FAFAFA',
   },
 
-  checkboxAtivo: {
+  tipoOpcaoAtiva: {
     backgroundColor: '#208AEF',
-    borderColor: '#208AEF',
   },
 
-  checkboxCheck: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-
-  toggleLabel: {
-    fontSize: 13,
-    fontWeight: '600',
+  tipoOpcaoTexto: {
+    fontSize: 11,
+    fontWeight: '700',
     color: '#667085',
-    flex: 1,
   },
 
-  toggleLabelAtivo: {
-    color: '#175CD3',
-    fontWeight: '700',
-  },
-
-  // Seção AC
-  acSection: {
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#F0F9FF',
-    borderWidth: 1,
-    borderColor: '#B2DDFF',
-  },
-
-  acSectionTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#175CD3',
-    letterSpacing: 0.6,
-    marginBottom: 10,
-  },
-
-  acRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-
-  acParteInfo: {
-    flex: 1,
-    marginRight: 8,
-  },
-
-  acParteTitulo: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#344054',
-  },
-
-  acParteBarcode: {
-    fontSize: 10,
-    color: '#98A2B3',
-    marginTop: 2,
-  },
-
-  acStatus: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-
-  acStatusOk: {
-    backgroundColor: '#ECFDF3',
-  },
-
-  acStatusPend: {
-    backgroundColor: '#F2F4F7',
-  },
-
-  acStatusText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-
-  acStatusTextOk: {
-    color: '#12B76A',
-  },
-
-  acStatusTextPend: {
-    color: '#98A2B3',
+  tipoOpcaoTextoAtivo: {
+    color: '#FFFFFF',
   },
 
   erroText: {
@@ -545,6 +498,10 @@ const styles = StyleSheet.create({
 
   editSaveButtonCond: {
     backgroundColor: '#175CD3',
+  },
+
+  editSaveButtonSecundario: {
+    backgroundColor: '#344054',
   },
 
   // Formulário

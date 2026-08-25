@@ -24,7 +24,7 @@ import {
   removerProduto,
   validarCodigoBarrasCond,
 } from '@/database/database';
-import type { Produto } from '@/models/produto';
+import type { Produto, TipoProduto } from '@/models/produto';
 
 // ============================================================
 // TELA
@@ -48,7 +48,7 @@ export default function CadastrarProdutoScreen() {
   const [categoria, setCategoria] = useState('');
   const [modelo, setModelo] = useState('');
   const [descricao, setDescricao] = useState('');
-  const [esArAcondicionado, setEsArAcondicionado] = useState(false);
+  const [tipoProduto, setTipoProduto] = useState<TipoProduto>('normal');
   const [codigoBarrasCond, setCodigoBarrasCond] = useState('');
 
   // ----------------------------------------------------------
@@ -87,7 +87,7 @@ export default function CadastrarProdutoScreen() {
         setCategoria(produto.categoria ?? '');
         setModelo(produto.modelo ?? '');
         setDescricao(produto.descricao ?? '');
-        setEsArAcondicionado(produto.esArAcondicionado ?? false);
+        setTipoProduto(produto.tipoProduto ?? 'normal');
         setCodigoBarrasCond(produto.codigoBarrasCond ?? '');
       })
       .catch(() => setErro('Erro ao carregar produto.'))
@@ -107,7 +107,7 @@ export default function CadastrarProdutoScreen() {
     try {
       const condTrimmed = codigoBarrasCond.trim();
 
-      if (esArAcondicionado && condTrimmed) {
+      if (tipoProduto === 'evaporadora' && condTrimmed) {
         const erroValidacao = await validarCodigoBarrasCond(
           condTrimmed,
           modoEdicao && produtoOriginal
@@ -130,8 +130,8 @@ export default function CadastrarProdutoScreen() {
           categoria: categoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
           descricao: descricao.trim() || undefined,
-          esArAcondicionado,
-          codigoBarrasCond: esArAcondicionado && condTrimmed ? condTrimmed : undefined,
+          tipoProduto,
+          codigoBarrasCond: tipoProduto === 'evaporadora' && condTrimmed ? condTrimmed : undefined,
         };
 
         await atualizarProduto(produtoAtualizado, codigoParam!);
@@ -144,8 +144,8 @@ export default function CadastrarProdutoScreen() {
           categoria: categoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
           descricao: descricao.trim() || undefined,
-          esArAcondicionado,
-          codigoBarrasCond: esArAcondicionado && condTrimmed ? condTrimmed : null,
+          tipoProduto,
+          codigoBarrasCond: tipoProduto === 'evaporadora' && condTrimmed ? condTrimmed : null,
         });
       }
 
@@ -373,36 +373,37 @@ export default function CadastrarProdutoScreen() {
             editable={!salvando && !sucesso}
           />
 
-          {/* AR CONDICIONADO */}
-          <Text style={styles.label}>TIPO</Text>
-          <Pressable
-            style={styles.toggleRow}
-            onPress={() => setEsArAcondicionado(!esArAcondicionado)}
-            disabled={salvando || sucesso}
-          >
-            <View
-              style={[
-                styles.checkbox,
-                esArAcondicionado && styles.checkboxAtivo,
-              ]}
-            >
-              {esArAcondicionado && (
-                <Text style={styles.checkboxCheck}>✓</Text>
-              )}
-            </View>
-            <Text style={styles.toggleLabel}>É ar condicionado (VAP + COND)</Text>
-          </Pressable>
-
-          {esArAcondicionado && (
-            <>
-              <View style={styles.acInfoBox}>
-                <Text style={styles.acInfoTitle}>❄ Conjunto VAP + COND</Text>
-                <Text style={styles.acInfoText}>
-                  O código de barras principal é a VAP (Evaporadora).{'\n'}
-                  Cadastre abaixo o código da COND (Condensadora) quando disponível.
+          {/* TIPO DE PRODUTO */}
+          <Text style={styles.label}>TIPO DE PRODUTO</Text>
+          <View style={[styles.tipoSelector, (salvando || sucesso) && styles.tipoSelectorDesabilitado]}>
+            {([
+              { valor: 'normal', label: 'Normal' },
+              { valor: 'evaporadora', label: 'Evaporadora' },
+              { valor: 'condensadora', label: 'Condensadora' },
+            ] as { valor: TipoProduto; label: string }[]).map((opcao) => (
+              <Pressable
+                key={opcao.valor}
+                style={[
+                  styles.tipoOpcao,
+                  tipoProduto === opcao.valor && styles.tipoOpcaoAtiva,
+                ]}
+                onPress={() => setTipoProduto(opcao.valor)}
+                disabled={salvando || sucesso}
+              >
+                <Text
+                  style={[
+                    styles.tipoOpcaoTexto,
+                    tipoProduto === opcao.valor && styles.tipoOpcaoTextoAtivo,
+                  ]}
+                >
+                  {opcao.label}
                 </Text>
-              </View>
+              </Pressable>
+            ))}
+          </View>
 
+          {tipoProduto === 'evaporadora' && (
+            <>
               <Text style={styles.label}>CÓDIGO DE BARRAS COND (Condensadora)</Text>
               <TextInput
                 style={styles.input}
@@ -660,66 +661,38 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
-  toggleRow: {
+  tipoSelector: {
     marginTop: 8,
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E1E5EA',
+    overflow: 'hidden',
+  },
+
+  tipoSelectorDesabilitado: {
+    opacity: 0.6,
+  },
+
+  tipoOpcao: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
   },
 
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: '#D0D5DD',
-    marginRight: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  checkboxAtivo: {
+  tipoOpcaoAtiva: {
     backgroundColor: '#208AEF',
-    borderColor: '#208AEF',
   },
 
-  checkboxCheck: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#18212F',
-    flex: 1,
-  },
-
-  acInfoBox: {
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: '#EFF8FF',
-    borderWidth: 1,
-    borderColor: '#B2DDFF',
-  },
-
-  acInfoTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#175CD3',
-    marginBottom: 6,
-  },
-
-  acInfoText: {
+  tipoOpcaoTexto: {
     fontSize: 12,
-    lineHeight: 18,
-    color: '#344054',
+    fontWeight: '700',
+    color: '#667085',
+  },
+
+  tipoOpcaoTextoAtivo: {
+    color: '#FFFFFF',
   },
 });

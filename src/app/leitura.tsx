@@ -30,16 +30,14 @@ import {
   atualizarNomeConferencia,
   atualizarProduto,
   atualizarStatusLeitura,
-  buscarPorCodigoBarrasGeral,
+  buscarPorCodigoBarras,
   cancelarConferencia,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
   formatarNumeroConferencia,
-  marcarStatusRevisao,
   obterConfiguracao,
   obterConferencia,
   obterLeiturasConferencia,
-  registrarLeituraAC,
   registrarLeituraConferencia,
   registrarProdutoDesconhecido,
   removerLeituraConferencia,
@@ -53,6 +51,7 @@ import type {
   DadosProdutoRapido,
   LeituraConferencia,
   StatusLeitura,
+  TipoProduto,
 } from '@/models/produto';
 
 // ============================================================
@@ -280,102 +279,8 @@ export default function LeituraScreen() {
 
     try {
       const agora = new Date().toISOString();
-      const busca = await buscarPorCodigoBarrasGeral(codigoBarras);
 
-      // --------------------------------------------------------
-      // AR CONDICIONADO
-      // --------------------------------------------------------
-      if (busca.produto && busca.parte !== null) {
-        const produto = busca.produto;
-        const parte = busca.parte;
-
-        const produtoExistente = produtos.find(
-          (item) => item.produto.codigoInterno === produto.codigoInterno,
-        );
-        const primeiraLeitura = produtoExistente ? produtoExistente.primeiraLeitura : agora;
-
-        const resultado = await registrarLeituraAC(
-          conferenciaId,
-          produto.codigoInterno,
-          parte,
-          primeiraLeitura,
-          agora,
-        );
-
-        if (resultado === 'ja_lido') {
-          // Parte já lida — feedback amarelo sem alterar estado
-          tocarSom(somAmarelo);
-          vibrarSeAtivado();
-          setTextoFeedbackAmarelo('JÁ LIDA');
-          setFeedbackAmarelo(true);
-          feedbackAmareloTimer.current = setTimeout(() => {
-            setFeedbackAmarelo(false);
-            feedbackAmareloTimer.current = null;
-          }, 450);
-        } else {
-          // Parte nova registada
-          const vapLidaNova = parte === 'vap' || (produtoExistente?.vapLida ?? false);
-          const condLidaNova = parte === 'cond' || (produtoExistente?.condLida ?? false);
-          const conjuntoCompleto = vapLidaNova && condLidaNova;
-
-          if (conjuntoCompleto) {
-            await marcarStatusRevisao(conferenciaId, produto.codigoInterno, 'ok');
-          }
-
-          setProdutos((listaAtual) => {
-            const indice = listaAtual.findIndex(
-              (item) => item.produto.codigoInterno === produto.codigoInterno,
-            );
-
-            if (indice >= 0) {
-              const novaLista = [...listaAtual];
-              const itemAtual = novaLista[indice];
-              novaLista[indice] = {
-                ...itemAtual,
-                ultimaLeitura: agora,
-                vapLida: parte === 'vap' ? true : itemAtual.vapLida,
-                condLida: parte === 'cond' ? true : itemAtual.condLida,
-                statusRevisao: conjuntoCompleto ? 'ok' : itemAtual.statusRevisao,
-              };
-              return novaLista;
-            }
-
-            const novoItem: LeituraConferencia = {
-              id: -1,
-              produto,
-              quantidade: 1,
-              primeiraLeitura,
-              ultimaLeitura: agora,
-              status: 'normal',
-              statusRevisao: conjuntoCompleto ? 'ok' : 'pendente',
-              vapLida: parte === 'vap',
-              condLida: parte === 'cond',
-            };
-
-            return [novoItem, ...listaAtual];
-          });
-
-          tocarSom(somAzul);
-          setLeituraConfirmada(true);
-          vibrarSeAtivado();
-
-          if (azulTimer.current) clearTimeout(azulTimer.current);
-          azulTimer.current = setTimeout(() => {
-            setLeituraConfirmada(false);
-          }, 450);
-        }
-
-        setTimeout(() => {
-          ultimoCodigoLido.current = null;
-        }, tempoBloqueioMs);
-
-        return;
-      }
-
-      // --------------------------------------------------------
-      // PRODUTO NORMAL (sem AC)
-      // --------------------------------------------------------
-      let produto = busca.produto;
+      let produto = await buscarPorCodigoBarras(codigoBarras);
       let statusNovaLeitura: StatusLeitura = 'normal';
 
       if (!produto) {
@@ -423,8 +328,6 @@ export default function LeituraScreen() {
           ultimaLeitura: agora,
           status: statusFinal,
           statusRevisao: 'pendente',
-          vapLida: false,
-          condLida: false,
         };
 
         return [novoItem, ...listaAtual];
@@ -649,30 +552,19 @@ function abrirEdicao(item: LeituraConferencia) {
     }
   }
 
-  async function toggleAC(esAr: boolean): Promise<string | null> {
-    if (!itemEditando || !conferenciaValida) return null;
+  async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {
+    if (!itemEditando) return null;
 
     try {
       await atualizarProduto(
-        {
-          ...itemEditando.produto,
-          esArAcondicionado: esAr,
-          codigoBarrasCond: esAr ? itemEditando.produto.codigoBarrasCond : undefined,
-        },
+        { ...itemEditando.produto, tipoProduto: tipo },
         itemEditando.produto.codigoInterno,
       );
 
       setProdutos((lista) =>
         lista.map((item) =>
           item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? {
-                ...item,
-                produto: {
-                  ...item.produto,
-                  esArAcondicionado: esAr,
-                  codigoBarrasCond: esAr ? item.produto.codigoBarrasCond : undefined,
-                },
-              }
+            ? { ...item, produto: { ...item.produto, tipoProduto: tipo } }
             : item,
         ),
       );
@@ -680,6 +572,35 @@ function abrirEdicao(item: LeituraConferencia) {
       return null;
     } catch {
       return 'Não foi possível salvar a alteração.';
+    }
+  }
+
+  async function salvarDadosProduto(dados: {
+    nome: string;
+    marca?: string;
+    categoria?: string;
+    modelo?: string;
+    descricao?: string;
+  }): Promise<string | null> {
+    if (!itemEditando) return null;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, ...dados },
+        itemEditando.produto.codigoInterno,
+      );
+
+      setProdutos((lista) =>
+        lista.map((item) =>
+          item.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? { ...item, produto: { ...item.produto, ...dados } }
+            : item,
+        ),
+      );
+
+      return null;
+    } catch {
+      return 'Não foi possível salvar os dados.';
     }
   }
 
@@ -1042,32 +963,12 @@ return (
                       {item.produto.nome}
                     </Text>
 
-                    {item.produto.esArAcondicionado ? (
+                    {item.produto.tipoProduto !== 'normal' ? (
                       <View style={styles.acPartesRow}>
-                        <Text
-                          style={[
-                            styles.acParteBadge,
-                            item.vapLida
-                              ? styles.acParteBadgeOk
-                              : styles.acParteBadgePend,
-                          ]}
-                        >
-                          VAP {item.vapLida ? '✅' : '⏳'}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.acParteBadge,
-                            item.condLida
-                              ? styles.acParteBadgeOk
-                              : styles.acParteBadgePend,
-                          ]}
-                        >
-                          COND{' '}
-                          {item.condLida
-                            ? '✅'
-                            : item.produto.codigoBarrasCond
-                            ? '⏳'
-                            : '—'}
+                        <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
+                          {item.produto.tipoProduto === 'evaporadora'
+                            ? '❄ Evaporadora'
+                            : '❄ Condensadora'}
                         </Text>
                       </View>
                     ) : (
@@ -1137,7 +1038,8 @@ return (
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
           onSalvarCond={salvarCond}
-          onToggleAC={toggleAC}
+          onAtualizarTipo={atualizarTipo}
+          onSalvarDadosProduto={salvarDadosProduto}
         />
       )}
 
@@ -1636,6 +1538,11 @@ const styles = StyleSheet.create({
   acParteBadgePend: {
     backgroundColor: '#F2F4F7',
     color: '#667085',
+  },
+
+  acParteBadgeTipo: {
+    backgroundColor: '#EFF8FF',
+    color: '#175CD3',
   },
 
   quantityBox: {

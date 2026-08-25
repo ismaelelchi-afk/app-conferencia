@@ -32,6 +32,7 @@ import type {
   ResumoRevisao,
   StatusLeitura,
   StatusRevisao,
+  TipoProduto,
 } from '@/models/produto';
 import { CORES_STATUS } from '@/constants/cores';
 import { ModalEdicaoItem } from '@/components/ModalEdicaoItem';
@@ -350,30 +351,19 @@ export default function ResultadoScreen() {
     }
   }
 
-  async function toggleAC(esAr: boolean): Promise<string | null> {
-    if (!itemEditando || !conferenciaValida) return null;
+  async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {
+    if (!itemEditando) return null;
 
     try {
       await atualizarProduto(
-        {
-          ...itemEditando.produto,
-          esArAcondicionado: esAr,
-          codigoBarrasCond: esAr ? itemEditando.produto.codigoBarrasCond : undefined,
-        },
+        { ...itemEditando.produto, tipoProduto: tipo },
         itemEditando.produto.codigoInterno,
       );
 
       setLeituras((lista) =>
         lista.map((item) =>
           item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? {
-                ...item,
-                produto: {
-                  ...item.produto,
-                  esArAcondicionado: esAr,
-                  codigoBarrasCond: esAr ? item.produto.codigoBarrasCond : undefined,
-                },
-              }
+            ? { ...item, produto: { ...item.produto, tipoProduto: tipo } }
             : item,
         ),
       );
@@ -381,6 +371,35 @@ export default function ResultadoScreen() {
       return null;
     } catch {
       return 'Não foi possível salvar a alteração.';
+    }
+  }
+
+  async function salvarDadosProduto(dados: {
+    nome: string;
+    marca?: string;
+    categoria?: string;
+    modelo?: string;
+    descricao?: string;
+  }): Promise<string | null> {
+    if (!itemEditando) return null;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, ...dados },
+        itemEditando.produto.codigoInterno,
+      );
+
+      setLeituras((lista) =>
+        lista.map((item) =>
+          item.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? { ...item, produto: { ...item.produto, ...dados } }
+            : item,
+        ),
+      );
+
+      return null;
+    } catch {
+      return 'Não foi possível salvar os dados.';
     }
   }
 
@@ -702,33 +721,13 @@ export default function ResultadoScreen() {
                         </View>
                       </View>
 
-                      {/* Indicadores VAP/COND para ar condicionado */}
-                      {item.produto.esArAcondicionado && (
+                      {/* Badge de tipo para evaporadora/condensadora */}
+                      {item.produto.tipoProduto !== 'normal' && (
                         <View style={styles.acPartesRow}>
-                          <Text
-                            style={[
-                              styles.acParteBadge,
-                              item.vapLida
-                                ? styles.acParteBadgeOk
-                                : styles.acParteBadgePend,
-                            ]}
-                          >
-                            VAP {item.vapLida ? '✅' : '⏳'}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.acParteBadge,
-                              item.condLida
-                                ? styles.acParteBadgeOk
-                                : styles.acParteBadgePend,
-                            ]}
-                          >
-                            COND{' '}
-                            {item.condLida
-                              ? '✅'
-                              : item.produto.codigoBarrasCond
-                              ? '⏳'
-                              : '— Não cadastrada'}
+                          <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
+                            {item.produto.tipoProduto === 'evaporadora'
+                              ? '❄ Evaporadora'
+                              : '❄ Condensadora'}
                           </Text>
                         </View>
                       )}
@@ -744,20 +743,13 @@ export default function ResultadoScreen() {
                   {/* Botões de revisão */}
                   {modoRevisao && (
                     <View style={styles.revisaoBotoes}>
-                      {(() => {
-                        const acIncompleto =
-                          item.produto.esArAcondicionado &&
-                          (!item.vapLida || !item.condLida);
-                        return (
-                          <Pressable
+                      <Pressable
                             style={[
                               styles.btnRevisao,
                               styles.btnOk,
                               item.statusRevisao === 'ok' && styles.btnOkAtivo,
-                              acIncompleto && styles.btnRevisaoDesabilitado,
                             ]}
                             onPress={() => void alterarRevisao(item, 'ok')}
-                            disabled={acIncompleto}
                           >
                             <Text
                               style={[
@@ -769,8 +761,6 @@ export default function ResultadoScreen() {
                               ✓ OK
                             </Text>
                           </Pressable>
-                        );
-                      })()}
 
                       <Pressable
                         style={[
@@ -875,7 +865,8 @@ export default function ResultadoScreen() {
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
           onSalvarCond={salvarCond}
-          onToggleAC={toggleAC}
+          onAtualizarTipo={atualizarTipo}
+          onSalvarDadosProduto={salvarDadosProduto}
         />
       )}
 
@@ -1335,6 +1326,11 @@ const styles = StyleSheet.create({
   acParteBadgePend: {
     backgroundColor: '#F2F4F7',
     color: '#667085',
+  },
+
+  acParteBadgeTipo: {
+    backgroundColor: '#EFF8FF',
+    color: '#175CD3',
   },
 
   // Botões de revisão

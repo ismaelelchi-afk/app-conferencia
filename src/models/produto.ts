@@ -4,6 +4,8 @@
 
 export type OrigemProduto = 'catalogo' | 'manual' | 'desconhecido';
 
+export type TipoProduto = 'normal' | 'evaporadora' | 'condensadora';
+
 export type Produto = {
   codigoInterno: string;
   codigoBarras: string;
@@ -15,7 +17,7 @@ export type Produto = {
   descricao?: string;
   ativo: boolean;
   origem: OrigemProduto;
-  esArAcondicionado: boolean;
+  tipoProduto: TipoProduto;
 };
 
 export type ResumoConferencia = {
@@ -70,8 +72,6 @@ export type LeituraConferencia = {
   ultimaLeitura: string;
   status: StatusLeitura;
   statusRevisao: StatusRevisao;
-  vapLida: boolean;
-  condLida: boolean;
 };
 
 export type ResumoRevisao = {

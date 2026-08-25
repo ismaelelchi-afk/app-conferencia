@@ -16,6 +16,7 @@ import type {
   StatusConferencia,
   StatusLeitura,
   StatusRevisao,
+  TipoProduto,
 } from '@/models/produto';
 
 import produtosRamsons from '@/assets/data/produtos-ramsons.json';
@@ -181,22 +182,16 @@ export async function inicializarDatabase(): Promise<void> {
     );
   }
 
-  // Migração: ar condicionado — rastreio de VAP/COND em leituras_conferencia.
-  const colVapLida = await db.getFirstAsync<{ cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM pragma_table_info('leituras_conferencia') WHERE name = 'vap_lida';`,
+  // Migração: tipo_produto — substitui es_ar_acondicionado (boolean) por tipo textual.
+  const colTipoProduto = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'tipo_produto';`,
   );
-  if (!colVapLida || colVapLida.cnt === 0) {
+  if (!colTipoProduto || colTipoProduto.cnt === 0) {
     await db.execAsync(
-      `ALTER TABLE leituras_conferencia ADD COLUMN vap_lida INTEGER NOT NULL DEFAULT 0;`,
+      `ALTER TABLE produtos ADD COLUMN tipo_produto TEXT NOT NULL DEFAULT 'normal';`,
     );
-  }
-
-  const colCondLida = await db.getFirstAsync<{ cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM pragma_table_info('leituras_conferencia') WHERE name = 'cond_lida';`,
-  );
-  if (!colCondLida || colCondLida.cnt === 0) {
     await db.execAsync(
-      `ALTER TABLE leituras_conferencia ADD COLUMN cond_lida INTEGER NOT NULL DEFAULT 0;`,
+      `UPDATE produtos SET tipo_produto = 'evaporadora' WHERE es_ar_acondicionado = 1;`,
     );
   }
 
@@ -263,6 +258,7 @@ type ProdutoSQLite = {
   ativo: number;
   origem: string;
   es_ar_acondicionado: number;
+  tipo_produto: string;
 };
 
 function converterProduto(produto: ProdutoSQLite): Produto {
@@ -277,7 +273,7 @@ function converterProduto(produto: ProdutoSQLite): Produto {
     descricao: produto.descricao ?? undefined,
     ativo: produto.ativo === 1,
     origem: (produto.origem as Produto['origem']) ?? 'catalogo',
-    esArAcondicionado: produto.es_ar_acondicionado === 1,
+    tipoProduto: (produto.tipo_produto as TipoProduto) ?? 'normal',
   };
 }
 
@@ -301,7 +297,7 @@ async function adicionarProduto(produto: Produto): Promise<void> {
         descricao,
         ativo,
         origem,
-        es_ar_acondicionado
+        tipo_produto
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `,
@@ -315,7 +311,7 @@ async function adicionarProduto(produto: Produto): Promise<void> {
     produto.descricao ?? null,
     produto.ativo ? 1 : 0,
     produto.origem,
-    produto.esArAcondicionado ? 1 : 0,
+    produto.tipoProduto ?? 'normal',
   );
 }
 
@@ -454,7 +450,7 @@ export async function atualizarProduto(
            categoria = ?,
            modelo = ?,
            descricao = ?,
-           es_ar_acondicionado = ?,
+           tipo_produto = ?,
            codigo_barras_cond = ?
          WHERE codigo_interno = ?;`,
         produto.codigoInterno,
@@ -463,7 +459,7 @@ export async function atualizarProduto(
         produto.categoria ?? null,
         produto.modelo ?? null,
         produto.descricao ?? null,
-        produto.esArAcondicionado ? 1 : 0,
+        produto.tipoProduto ?? 'normal',
         produto.codigoBarrasCond || null,
         codigoInternoOriginal,
       );
@@ -776,7 +772,7 @@ export type DadosProdutoManual = {
   categoria?: string;
   modelo?: string;
   descricao?: string;
-  esArAcondicionado?: boolean;
+  tipoProduto?: TipoProduto;
 };
 
 export async function criarProdutoManual(
@@ -795,7 +791,7 @@ export async function criarProdutoManual(
     descricao: dados.descricao,
     ativo: true,
     origem: 'manual',
-    esArAcondicionado: dados.esArAcondicionado ?? false,
+    tipoProduto: dados.tipoProduto ?? 'normal',
   };
 
   await adicionarProduto(produto);
@@ -825,7 +821,7 @@ export async function registrarProdutoDesconhecido(
     nome: `Produto não identificado (${codigoBarras})`,
     ativo: true,
     origem: 'desconhecido',
-    esArAcondicionado: false,
+    tipoProduto: 'normal',
   };
 
   await adicionarProduto(produto);
@@ -1181,8 +1177,6 @@ type LeituraConferenciaSQLite = {
   ultima_leitura: string;
   status: StatusLeitura;
   status_revisao: StatusRevisao;
-  vap_lida: number;
-  cond_lida: number;
   codigo_interno: string;
   codigo_barras: string | null;
   codigo_barras_cond: string | null;
@@ -1193,7 +1187,7 @@ type LeituraConferenciaSQLite = {
   descricao: string | null;
   ativo: number;
   origem: string;
-  es_ar_acondicionado: number;
+  tipo_produto: string;
 };
 
 export async function obterLeiturasConferencia(
@@ -1210,8 +1204,6 @@ export async function obterLeiturasConferencia(
         leituras_conferencia.ultima_leitura AS ultima_leitura,
         leituras_conferencia.status AS status,
         leituras_conferencia.status_revisao AS status_revisao,
-        leituras_conferencia.vap_lida AS vap_lida,
-        leituras_conferencia.cond_lida AS cond_lida,
         produtos.codigo_interno AS codigo_interno,
         produtos.codigo_barras AS codigo_barras,
         produtos.codigo_barras_cond AS codigo_barras_cond,
@@ -1222,7 +1214,7 @@ export async function obterLeiturasConferencia(
         produtos.descricao AS descricao,
         produtos.ativo AS ativo,
         produtos.origem AS origem,
-        produtos.es_ar_acondicionado AS es_ar_acondicionado
+        produtos.tipo_produto AS tipo_produto
       FROM leituras_conferencia
       INNER JOIN produtos
         ON produtos.codigo_interno = leituras_conferencia.codigo_interno
@@ -1245,15 +1237,14 @@ export async function obterLeiturasConferencia(
       descricao: item.descricao,
       ativo: item.ativo,
       origem: item.origem,
-      es_ar_acondicionado: item.es_ar_acondicionado,
+      es_ar_acondicionado: 0,
+      tipo_produto: item.tipo_produto,
     }),
     quantidade: item.quantidade,
     primeiraLeitura: item.primeira_leitura,
     ultimaLeitura: item.ultima_leitura,
     status: item.status,
     statusRevisao: item.status_revisao,
-    vapLida: item.vap_lida === 1,
-    condLida: item.cond_lida === 1,
   }));
 }
 
@@ -1523,108 +1514,6 @@ export async function marcarStatusRevisao(
     conferenciaId,
     codigoInterno,
   );
-}
-
-// ============================================================
-// AR CONDICIONADO — BUSCA EM VAP E COND
-// Retorna o produto pai e qual barcode foi encontrado.
-// ============================================================
-
-export type BuscaCodigoBarrasResult = {
-  produto: Produto | undefined;
-  parte: 'vap' | 'cond' | null;
-};
-
-export async function buscarPorCodigoBarrasGeral(
-  codigoBarras: string,
-): Promise<BuscaCodigoBarrasResult> {
-  const db = await obterDatabase();
-
-  const resultadoVap = await db.getFirstAsync<ProdutoSQLite>(
-    `SELECT * FROM produtos WHERE codigo_barras = ? AND ativo = 1 LIMIT 1;`,
-    codigoBarras,
-  );
-  if (resultadoVap) {
-    const produto = converterProduto(resultadoVap);
-    return { produto, parte: produto.esArAcondicionado ? 'vap' : null };
-  }
-
-  const resultadoCond = await db.getFirstAsync<ProdutoSQLite>(
-    `SELECT * FROM produtos WHERE codigo_barras_cond = ? AND ativo = 1 LIMIT 1;`,
-    codigoBarras,
-  );
-  if (resultadoCond) {
-    return { produto: converterProduto(resultadoCond), parte: 'cond' };
-  }
-
-  return { produto: undefined, parte: null };
-}
-
-// ============================================================
-// AR CONDICIONADO — REGISTRAR LEITURA DE VAP OU COND
-// ============================================================
-
-export type ResultadoLeituraAC =
-  | 'inserida'
-  | 'atualizada'
-  | 'completa'
-  | 'ja_lido';
-
-export async function registrarLeituraAC(
-  conferenciaId: number,
-  codigoInterno: string,
-  parte: 'vap' | 'cond',
-  primeiraLeitura: string,
-  ultimaLeitura: string,
-): Promise<ResultadoLeituraAC> {
-  const db = await obterDatabase();
-
-  const existente = await db.getFirstAsync<{
-    id: number;
-    vap_lida: number;
-    cond_lida: number;
-  }>(
-    `SELECT id, vap_lida, cond_lida
-     FROM leituras_conferencia
-     WHERE conferencia_id = ? AND codigo_interno = ?
-     LIMIT 1;`,
-    conferenciaId,
-    codigoInterno,
-  );
-
-  if (!existente) {
-    const vapLida = parte === 'vap' ? 1 : 0;
-    const condLida = parte === 'cond' ? 1 : 0;
-    await db.runAsync(
-      `INSERT INTO leituras_conferencia
-         (conferencia_id, codigo_interno, quantidade, primeira_leitura, ultima_leitura, status, vap_lida, cond_lida)
-       VALUES (?, ?, 1, ?, ?, 'normal', ?, ?);`,
-      conferenciaId,
-      codigoInterno,
-      primeiraLeitura,
-      ultimaLeitura,
-      vapLida,
-      condLida,
-    );
-    return 'inserida';
-  }
-
-  const jaLida =
-    parte === 'vap' ? existente.vap_lida === 1 : existente.cond_lida === 1;
-  if (jaLida) {
-    return 'ja_lido';
-  }
-
-  const campo = parte === 'vap' ? 'vap_lida' : 'cond_lida';
-  await db.runAsync(
-    `UPDATE leituras_conferencia SET ${campo} = 1, ultima_leitura = ? WHERE id = ?;`,
-    ultimaLeitura,
-    existente.id,
-  );
-
-  const vapLidaFinal = parte === 'vap' ? 1 : existente.vap_lida;
-  const condLidaFinal = parte === 'cond' ? 1 : existente.cond_lida;
-  return vapLidaFinal === 1 && condLidaFinal === 1 ? 'completa' : 'atualizada';
 }
 
 // ============================================================
