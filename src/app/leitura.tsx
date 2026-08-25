@@ -999,10 +999,12 @@ return (
                     <View style={styles.parHeader}>
                       <Text style={styles.parHeaderText}>❄ CONJUNTO</Text>
                       <Text style={styles.parHeaderCodigo}>{codigoPar}</Text>
-                      {ambosPresentes && (
+                      {ambosPresentes ? (
                         <View style={styles.parHeaderBadge}>
                           <Text style={styles.parHeaderBadgeText}>COMPLETO</Text>
                         </View>
+                      ) : (
+                        <Text style={styles.parHeaderIncompleto}>falta parte</Text>
                       )}
                     </View>
                     {items.map((item) => {
@@ -1700,6 +1702,13 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '800',
     color: '#027A48',
+  },
+
+  parHeaderIncompleto: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#98A2B3',
+    fontStyle: 'italic',
   },
 
   productCardPar: {
