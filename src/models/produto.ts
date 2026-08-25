@@ -1,63 +1,33 @@
 // ============================================================
 // MODELO DE PRODUTO — RAMSONS CONFERÊNCIA
-// Parte 1/2
 // ============================================================
 
-// Origem de um produto no catálogo.
 export type OrigemProduto = 'catalogo' | 'manual' | 'desconhecido';
 
-// Producto que existe en la base de datos.
 export type Produto = {
   codigoInterno: string;
   codigoBarras: string;
+  codigoBarrasCond?: string;
   nome: string;
   marca?: string;
   categoria?: string;
   modelo?: string;
-  unidade?: string;
-  estoque?: number;
+  descricao?: string;
   ativo: boolean;
-  url?: string;
-  especificacoes?: Record<string, string>;
   origem: OrigemProduto;
+  esArAcondicionado: boolean;
 };
-
-// ============================================================
-// PRODUCTO LEÍDO DURANTE UNA CONFERENCIA
-// ============================================================
-
-export type ProdutoLido = {
-  produto: Produto;
-  quantidade: number;
-  primeiraLeitura: string;
-  ultimaLeitura: string;
-};
-
-// ============================================================
-// TIPOS DE RESULTADO DE LECTURA
-// Parte 2/2
-// ============================================================
-
-export type ResultadoLeitura = {
-  codigoBarras: string;
-  produto?: Produto;
-  encontrado: boolean;
-  mensagem: string;
-  dataHora: string;
-};
-
-export type EstadoConferencia =
-  | 'aguardando'
-  | 'lendo'
-  | 'produto-encontrado'
-  | 'produto-nao-encontrado'
-  | 'finalizada';
 
 export type ResumoConferencia = {
   produtosLidos: number;
   unidadesLidas: number;
   produtosNaoEncontrados: number;
 };
+
+// ============================================================
+// IMPORTAÇÃO DE PRODUTOS (JSON externo)
+// Estrutura aceita por importarCatalogoExterno.
+// ============================================================
 
 export type ProdutoImportacao = {
   codigoInterno: string;
@@ -66,15 +36,11 @@ export type ProdutoImportacao = {
   marca?: string | null;
   categoria?: string | null;
   modelo?: string | null;
-  url?: string | null;
-  especificacoes?: Record<string, string>;
-  unidade?: string;
-  estoque?: number;
-  ativo?: boolean;
+  descricao?: string | null;
 };
 
 // ============================================================
-// CONFERENCIA (SESIÓN)
+// CONFERENCIA (SESSÃO)
 // ============================================================
 
 export type StatusConferencia = 'em_andamento' | 'finalizada' | 'cancelada';
@@ -89,7 +55,7 @@ export type Conferencia = {
 };
 
 // ============================================================
-// ESTADO DE UNA LECTURA DENTRO DE LA LISTA
+// ESTADO DE UMA LEITURA DENTRO DA LISTA
 // ============================================================
 
 export type StatusLeitura = 'normal' | 'novo' | 'desconhecido';
@@ -104,6 +70,8 @@ export type LeituraConferencia = {
   ultimaLeitura: string;
   status: StatusLeitura;
   statusRevisao: StatusRevisao;
+  vapLida: boolean;
+  condLida: boolean;
 };
 
 export type ResumoRevisao = {
@@ -113,12 +81,17 @@ export type ResumoRevisao = {
   total: number;
 };
 
+// ============================================================
+// DADOS PARA COMPLETAR / REGISTRAR PRODUTO RÁPIDO
+// Usado em leitura.tsx (modal de desconhecido) e
+// completarProdutoDesconhecido().
+// ============================================================
+
 export type DadosProdutoRapido = {
+  codigoInterno?: string;
   nome: string;
   marca?: string;
   categoria?: string;
   modelo?: string;
-  unidade?: string;
-  estoque?: number;
-  url?: string;
+  descricao?: string;
 };

@@ -22,6 +22,7 @@ import {
   buscarPorCodigoInterno,
   criarProdutoManual,
   removerProduto,
+  validarCodigoBarrasCond,
 } from '@/database/database';
 import type { Produto } from '@/models/produto';
 
@@ -46,9 +47,9 @@ export default function CadastrarProdutoScreen() {
   const [marca, setMarca] = useState('');
   const [categoria, setCategoria] = useState('');
   const [modelo, setModelo] = useState('');
-  const [unidade, setUnidade] = useState('UN');
-  const [estoque, setEstoque] = useState('0');
-  const [url, setUrl] = useState('');
+  const [descricao, setDescricao] = useState('');
+  const [esArAcondicionado, setEsArAcondicionado] = useState(false);
+  const [codigoBarrasCond, setCodigoBarrasCond] = useState('');
 
   // ----------------------------------------------------------
   // ESTADO DA TELA
@@ -85,9 +86,9 @@ export default function CadastrarProdutoScreen() {
         setMarca(produto.marca ?? '');
         setCategoria(produto.categoria ?? '');
         setModelo(produto.modelo ?? '');
-        setUnidade(produto.unidade ?? 'UN');
-        setEstoque(String(produto.estoque ?? 0));
-        setUrl(produto.url ?? '');
+        setDescricao(produto.descricao ?? '');
+        setEsArAcondicionado(produto.esArAcondicionado ?? false);
+        setCodigoBarrasCond(produto.codigoBarrasCond ?? '');
       })
       .catch(() => setErro('Erro ao carregar produto.'))
       .finally(() => setCarregando(false));
@@ -104,20 +105,36 @@ export default function CadastrarProdutoScreen() {
     setErro(null);
 
     try {
+      const condTrimmed = codigoBarrasCond.trim();
+
+      if (esArAcondicionado && condTrimmed) {
+        const erroValidacao = await validarCodigoBarrasCond(
+          condTrimmed,
+          modoEdicao && produtoOriginal
+            ? produtoOriginal.codigoInterno
+            : '__novo__',
+        );
+        if (erroValidacao) {
+          setErro(erroValidacao);
+          setSalvando(false);
+          return;
+        }
+      }
+
       if (modoEdicao && produtoOriginal) {
         const produtoAtualizado: Produto = {
           ...produtoOriginal,
-          codigoBarras: codigoBarras.trim() || '',
+          codigoInterno: codigoInterno.trim() || produtoOriginal.codigoInterno,
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
-          unidade: unidade.trim() || 'UN',
-          estoque: Number(estoque) || 0,
-          url: url.trim() || undefined,
+          descricao: descricao.trim() || undefined,
+          esArAcondicionado,
+          codigoBarrasCond: esArAcondicionado && condTrimmed ? condTrimmed : undefined,
         };
 
-        await atualizarProduto(produtoAtualizado);
+        await atualizarProduto(produtoAtualizado, codigoParam!);
       } else {
         await criarProdutoManual({
           codigoInterno: codigoInterno.trim() || undefined,
@@ -126,9 +143,9 @@ export default function CadastrarProdutoScreen() {
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
-          unidade: unidade.trim() || 'UN',
-          estoque: Number(estoque) || 0,
-          url: url.trim() || undefined,
+          descricao: descricao.trim() || undefined,
+          esArAcondicionado,
+          codigoBarrasCond: esArAcondicionado && condTrimmed ? condTrimmed : null,
         });
       }
 
@@ -271,30 +288,32 @@ export default function CadastrarProdutoScreen() {
             </View>
           )}
 
-          {/* CÓDIGO INTERNO */}
+          {/* CÓDIGO DE BARRAS — imutável após criação */}
+          <Text style={styles.label}>
+            CÓDIGO DE BARRAS{modoEdicao ? ' (não pode ser alterado)' : ''}
+          </Text>
+          <TextInput
+            style={[styles.input, modoEdicao && styles.inputReadonly]}
+            value={codigoBarras}
+            onChangeText={modoEdicao ? undefined : setCodigoBarras}
+            placeholder="Opcional"
+            placeholderTextColor="#98A2B3"
+            keyboardType="number-pad"
+            editable={!modoEdicao && !salvando && !sucesso}
+          />
+
+          {/* CÓDIGO INTERNO — editável em qualquer modo */}
           <Text style={styles.label}>
             CÓDIGO INTERNO{modoEdicao ? '' : ' (opcional — gerado automaticamente)'}
           </Text>
           <TextInput
-            style={[styles.input, modoEdicao && styles.inputReadonly]}
+            style={styles.input}
             value={codigoInterno}
-            onChangeText={modoEdicao ? undefined : setCodigoInterno}
+            onChangeText={setCodigoInterno}
             placeholder={modoEdicao ? '' : 'Ex.: MAN-001 (deixe em branco para gerar)'}
             placeholderTextColor="#98A2B3"
-            editable={!modoEdicao && !salvando && !sucesso}
-            autoCapitalize="characters"
-          />
-
-          {/* CÓDIGO DE BARRAS */}
-          <Text style={styles.label}>CÓDIGO DE BARRAS</Text>
-          <TextInput
-            style={styles.input}
-            value={codigoBarras}
-            onChangeText={setCodigoBarras}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            keyboardType="number-pad"
             editable={!salvando && !sucesso}
+            autoCapitalize="characters"
           />
 
           {/* NOME */}
@@ -341,46 +360,61 @@ export default function CadastrarProdutoScreen() {
             editable={!salvando && !sucesso}
           />
 
-          {/* UNIDADE + ESTOQUE */}
-          <View style={styles.row}>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>UNIDADE</Text>
-              <TextInput
-                style={styles.input}
-                value={unidade}
-                onChangeText={setUnidade}
-                placeholder="UN"
-                placeholderTextColor="#98A2B3"
-                autoCapitalize="characters"
-                editable={!salvando && !sucesso}
-              />
+          {/* DESCRIÇÃO */}
+          <Text style={styles.label}>DESCRIÇÃO</Text>
+          <TextInput
+            style={[styles.input, styles.inputMultiline]}
+            value={descricao}
+            onChangeText={setDescricao}
+            placeholder="Opcional"
+            placeholderTextColor="#98A2B3"
+            multiline
+            numberOfLines={3}
+            editable={!salvando && !sucesso}
+          />
+
+          {/* AR CONDICIONADO */}
+          <Text style={styles.label}>TIPO</Text>
+          <Pressable
+            style={styles.toggleRow}
+            onPress={() => setEsArAcondicionado(!esArAcondicionado)}
+            disabled={salvando || sucesso}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                esArAcondicionado && styles.checkboxAtivo,
+              ]}
+            >
+              {esArAcondicionado && (
+                <Text style={styles.checkboxCheck}>✓</Text>
+              )}
             </View>
-            <View style={styles.rowItem}>
-              <Text style={styles.label}>ESTOQUE</Text>
+            <Text style={styles.toggleLabel}>É ar condicionado (VAP + COND)</Text>
+          </Pressable>
+
+          {esArAcondicionado && (
+            <>
+              <View style={styles.acInfoBox}>
+                <Text style={styles.acInfoTitle}>❄ Conjunto VAP + COND</Text>
+                <Text style={styles.acInfoText}>
+                  O código de barras principal é a VAP (Evaporadora).{'\n'}
+                  Cadastre abaixo o código da COND (Condensadora) quando disponível.
+                </Text>
+              </View>
+
+              <Text style={styles.label}>CÓDIGO DE BARRAS COND (Condensadora)</Text>
               <TextInput
                 style={styles.input}
-                value={estoque}
-                onChangeText={setEstoque}
-                placeholder="0"
+                value={codigoBarrasCond}
+                onChangeText={setCodigoBarrasCond}
+                placeholder="Opcional — cadastrar depois se necessário"
                 placeholderTextColor="#98A2B3"
                 keyboardType="number-pad"
                 editable={!salvando && !sucesso}
               />
-            </View>
-          </View>
-
-          {/* URL */}
-          <Text style={styles.label}>URL / LINK</Text>
-          <TextInput
-            style={styles.input}
-            value={url}
-            onChangeText={setUrl}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            keyboardType="url"
-            autoCapitalize="none"
-            editable={!salvando && !sucesso}
-          />
+            </>
+          )}
 
           {erro ? <Text style={styles.errorText}>{erro}</Text> : null}
 
@@ -515,13 +549,10 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-
-  rowItem: {
-    flex: 1,
+  inputMultiline: {
+    height: 80,
+    paddingTop: 12,
+    textAlignVertical: 'top',
   },
 
   errorText: {
@@ -627,5 +658,68 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#667085',
+  },
+
+  toggleRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    backgroundColor: '#FFFFFF',
+  },
+
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#D0D5DD',
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  checkboxAtivo: {
+    backgroundColor: '#208AEF',
+    borderColor: '#208AEF',
+  },
+
+  checkboxCheck: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#18212F',
+    flex: 1,
+  },
+
+  acInfoBox: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#EFF8FF',
+    borderWidth: 1,
+    borderColor: '#B2DDFF',
+  },
+
+  acInfoTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#175CD3',
+    marginBottom: 6,
+  },
+
+  acInfoText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#344054',
   },
 });

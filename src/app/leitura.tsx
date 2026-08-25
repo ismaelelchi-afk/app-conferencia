@@ -28,21 +28,26 @@ import { router, useLocalSearchParams } from 'expo-router';
 
 import {
   atualizarNomeConferencia,
+  atualizarProduto,
   atualizarStatusLeitura,
-  buscarPorCodigoBarras,
+  buscarPorCodigoBarrasGeral,
   cancelarConferencia,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
   formatarNumeroConferencia,
+  marcarStatusRevisao,
   obterConfiguracao,
   obterConferencia,
   obterLeiturasConferencia,
+  registrarLeituraAC,
   registrarLeituraConferencia,
   registrarProdutoDesconhecido,
   removerLeituraConferencia,
+  validarCodigoBarrasCond,
 } from '@/database/database';
 
 import { CORES_STATUS } from '@/constants/cores';
+import { ModalEdicaoItem } from '@/components/ModalEdicaoItem';
 
 import type {
   DadosProdutoRapido,
@@ -78,9 +83,6 @@ export default function LeituraScreen() {
   const [produtos, setProdutos] =
     useState<LeituraConferencia[]>([]);
 
-  const [ultimoProduto, setUltimoProduto] =
-    useState<LeituraConferencia | null>(null);
-
   const [processando, setProcessando] =
     useState(false);
 
@@ -92,6 +94,8 @@ export default function LeituraScreen() {
 
   const [feedbackVermelho, setFeedbackVermelho] = useState(false);
   const [feedbackAmarelo, setFeedbackAmarelo] = useState(false);
+  const [textoFeedbackAmarelo, setTextoFeedbackAmarelo] = useState('NADA ENCONTRADO');
+  const [primeiraScanPendente, setPrimeiraScanPendente] = useState(false);
 
   const [somAtivado, setSomAtivado] = useState(true);
   const [vibrarAtivado, setVibrarAtivado] = useState(true);
@@ -135,6 +139,9 @@ export default function LeituraScreen() {
   const leituraManualTimer =
     useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const feedbackAmareloTimer =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const somAzul = useAudioPlayer(require('@/assets/sounds/azul.mp3'));
   const somVermelho = useAudioPlayer(
     require('@/assets/sounds/vermelho.mp3'),
@@ -160,9 +167,9 @@ export default function LeituraScreen() {
 
   useEffect(() => {
     return () => {
-      if (azulTimer.current) {
-        clearTimeout(azulTimer.current);
-      }
+      if (azulTimer.current) clearTimeout(azulTimer.current);
+      if (leituraManualTimer.current) clearTimeout(leituraManualTimer.current);
+      if (feedbackAmareloTimer.current) clearTimeout(feedbackAmareloTimer.current);
     };
   }, []);
 
@@ -262,8 +269,8 @@ export default function LeituraScreen() {
     }
 
     if (ultimoCodigoLido.current === codigoBarras) {
-      // Código ainda bloqueado — descarta pendente para não acumular leitura antiga.
       codigoPendente.current = null;
+      setPrimeiraScanPendente(false);
       return;
     }
 
@@ -272,7 +279,103 @@ export default function LeituraScreen() {
     setProcessando(true);
 
     try {
-      let produto = await buscarPorCodigoBarras(codigoBarras);
+      const agora = new Date().toISOString();
+      const busca = await buscarPorCodigoBarrasGeral(codigoBarras);
+
+      // --------------------------------------------------------
+      // AR CONDICIONADO
+      // --------------------------------------------------------
+      if (busca.produto && busca.parte !== null) {
+        const produto = busca.produto;
+        const parte = busca.parte;
+
+        const produtoExistente = produtos.find(
+          (item) => item.produto.codigoInterno === produto.codigoInterno,
+        );
+        const primeiraLeitura = produtoExistente ? produtoExistente.primeiraLeitura : agora;
+
+        const resultado = await registrarLeituraAC(
+          conferenciaId,
+          produto.codigoInterno,
+          parte,
+          primeiraLeitura,
+          agora,
+        );
+
+        if (resultado === 'ja_lido') {
+          // Parte já lida — feedback amarelo sem alterar estado
+          tocarSom(somAmarelo);
+          vibrarSeAtivado();
+          setTextoFeedbackAmarelo('JÁ LIDA');
+          setFeedbackAmarelo(true);
+          feedbackAmareloTimer.current = setTimeout(() => {
+            setFeedbackAmarelo(false);
+            feedbackAmareloTimer.current = null;
+          }, 450);
+        } else {
+          // Parte nova registada
+          const vapLidaNova = parte === 'vap' || (produtoExistente?.vapLida ?? false);
+          const condLidaNova = parte === 'cond' || (produtoExistente?.condLida ?? false);
+          const conjuntoCompleto = vapLidaNova && condLidaNova;
+
+          if (conjuntoCompleto) {
+            await marcarStatusRevisao(conferenciaId, produto.codigoInterno, 'ok');
+          }
+
+          setProdutos((listaAtual) => {
+            const indice = listaAtual.findIndex(
+              (item) => item.produto.codigoInterno === produto.codigoInterno,
+            );
+
+            if (indice >= 0) {
+              const novaLista = [...listaAtual];
+              const itemAtual = novaLista[indice];
+              novaLista[indice] = {
+                ...itemAtual,
+                ultimaLeitura: agora,
+                vapLida: parte === 'vap' ? true : itemAtual.vapLida,
+                condLida: parte === 'cond' ? true : itemAtual.condLida,
+                statusRevisao: conjuntoCompleto ? 'ok' : itemAtual.statusRevisao,
+              };
+              return novaLista;
+            }
+
+            const novoItem: LeituraConferencia = {
+              id: -1,
+              produto,
+              quantidade: 1,
+              primeiraLeitura,
+              ultimaLeitura: agora,
+              status: 'normal',
+              statusRevisao: conjuntoCompleto ? 'ok' : 'pendente',
+              vapLida: parte === 'vap',
+              condLida: parte === 'cond',
+            };
+
+            return [novoItem, ...listaAtual];
+          });
+
+          tocarSom(somAzul);
+          setLeituraConfirmada(true);
+          vibrarSeAtivado();
+
+          if (azulTimer.current) clearTimeout(azulTimer.current);
+          azulTimer.current = setTimeout(() => {
+            setLeituraConfirmada(false);
+          }, 450);
+        }
+
+        setTimeout(() => {
+          ultimoCodigoLido.current = null;
+        }, tempoBloqueioMs);
+
+        return;
+      }
+
+      // --------------------------------------------------------
+      // PRODUTO NORMAL (sem AC)
+      // --------------------------------------------------------
+      let produto = busca.produto;
       let statusNovaLeitura: StatusLeitura = 'normal';
 
       if (!produto) {
@@ -280,20 +383,12 @@ export default function LeituraScreen() {
         statusNovaLeitura = 'desconhecido';
       }
 
-      const agora = new Date().toISOString();
-
       const produtoExistente = produtos.find(
-        (item) =>
-          item.produto.codigoInterno === produto!.codigoInterno,
+        (item) => item.produto.codigoInterno === produto!.codigoInterno,
       );
 
-      const primeiraLeitura =
-        produtoExistente
-          ? produtoExistente.primeiraLeitura
-          : agora;
-
-      const statusFinal =
-        produtoExistente?.status ?? statusNovaLeitura;
+      const primeiraLeitura = produtoExistente ? produtoExistente.primeiraLeitura : agora;
+      const statusFinal = produtoExistente?.status ?? statusNovaLeitura;
 
       await registrarLeituraConferencia(
         conferenciaId,
@@ -306,23 +401,17 @@ export default function LeituraScreen() {
 
       setProdutos((listaAtual) => {
         const indice = listaAtual.findIndex(
-          (item) =>
-            item.produto.codigoInterno === produto!.codigoInterno,
+          (item) => item.produto.codigoInterno === produto!.codigoInterno,
         );
 
         if (indice >= 0) {
           const novaLista = [...listaAtual];
           const itemAtual = novaLista[indice];
-
-          const itemAtualizado: LeituraConferencia = {
+          novaLista[indice] = {
             ...itemAtual,
             quantidade: itemAtual.quantidade + 1,
             ultimaLeitura: agora,
           };
-
-          novaLista[indice] = itemAtualizado;
-          setUltimoProduto(itemAtualizado);
-
           return novaLista;
         }
 
@@ -334,9 +423,9 @@ export default function LeituraScreen() {
           ultimaLeitura: agora,
           status: statusFinal,
           statusRevisao: 'pendente',
+          vapLida: false,
+          condLida: false,
         };
-
-        setUltimoProduto(novoItem);
 
         return [novoItem, ...listaAtual];
       });
@@ -353,10 +442,7 @@ export default function LeituraScreen() {
 
       vibrarSeAtivado();
 
-      if (azulTimer.current) {
-        clearTimeout(azulTimer.current);
-      }
-
+      if (azulTimer.current) clearTimeout(azulTimer.current);
       azulTimer.current = setTimeout(() => {
         setLeituraConfirmada(false);
         setFeedbackVermelho(false);
@@ -366,11 +452,7 @@ export default function LeituraScreen() {
         ultimoCodigoLido.current = null;
       }, tempoBloqueioMs);
     } catch (error) {
-      console.error(
-        'Erro ao registrar leitura:',
-        error,
-      );
-
+      console.error('Erro ao registrar leitura:', error);
       ultimoCodigoLido.current = null;
     } finally {
       setProcessando(false);
@@ -402,12 +484,14 @@ export default function LeituraScreen() {
 
       if (novaContagem >= 2) {
         codigoPendente.current = null;
+        setPrimeiraScanPendente(false);
         void registrarLeitura(data);
       } else {
         codigoPendente.current = { data, contagem: novaContagem };
       }
     } else {
       codigoPendente.current = { data, contagem: 1 };
+      setPrimeiraScanPendente(true);
     }
   }
 
@@ -424,10 +508,12 @@ export default function LeituraScreen() {
 
       tocarSom(somAmarelo);
       vibrarSeAtivado();
+      setTextoFeedbackAmarelo('NADA ENCONTRADO');
       setFeedbackAmarelo(true);
 
-      setTimeout(() => {
+      feedbackAmareloTimer.current = setTimeout(() => {
         setFeedbackAmarelo(false);
+        feedbackAmareloTimer.current = null;
       }, 450);
     }, 1500);
   }
@@ -524,14 +610,14 @@ function abrirEdicao(item: LeituraConferencia) {
     }
 
     try {
-      await completarProdutoDesconhecido(
+      const novoCodigoInterno = await completarProdutoDesconhecido(
         itemEditando.produto.codigoInterno,
         dados,
       );
 
       await atualizarStatusLeitura(
         conferenciaId,
-        itemEditando.produto.codigoInterno,
+        novoCodigoInterno,
         'novo',
       );
 
@@ -544,13 +630,12 @@ function abrirEdicao(item: LeituraConferencia) {
                 status: 'novo',
                 produto: {
                   ...item.produto,
+                  codigoInterno: novoCodigoInterno,
                   nome: dados.nome,
                   marca: dados.marca,
                   categoria: dados.categoria,
                   modelo: dados.modelo,
-                  unidade: dados.unidade ?? item.produto.unidade,
-                  estoque: dados.estoque ?? item.produto.estoque,
-                  url: dados.url,
+                  descricao: dados.descricao,
                   origem: 'manual',
                 },
               }
@@ -561,6 +646,41 @@ function abrirEdicao(item: LeituraConferencia) {
       fecharEdicao();
     } catch (error) {
       console.error('Erro ao salvar produto novo:', error);
+    }
+  }
+
+  async function salvarCond(
+    codigoBarrasCond: string,
+  ): Promise<string | null> {
+    if (!itemEditando || !conferenciaValida) return null;
+
+    const erroValidacao = await validarCodigoBarrasCond(
+      codigoBarrasCond,
+      itemEditando.produto.codigoInterno,
+    );
+    if (erroValidacao) return erroValidacao;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, codigoBarrasCond },
+        itemEditando.produto.codigoInterno,
+      );
+
+      setProdutos((lista) =>
+        lista.map((item) =>
+          item.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? {
+                ...item,
+                produto: { ...item.produto, codigoBarrasCond },
+              }
+            : item,
+        ),
+      );
+
+      fecharEdicao();
+      return null;
+    } catch {
+      return 'Não foi possível salvar o código COND.';
     }
   }
 
@@ -807,9 +927,9 @@ return (
             </Text>
           </Pressable>
         ) : (
-          <View style={styles.cameraHint}>
-            <Text style={styles.cameraHintText}>
-              Aponte para o código de barras
+          <View style={[styles.cameraHint, primeiraScanPendente && styles.cameraHintPendente]}>
+            <Text style={[styles.cameraHintText, primeiraScanPendente && styles.cameraHintTextPendente]}>
+              {primeiraScanPendente ? 'LEIA NOVAMENTE' : 'Aponte para o código de barras'}
             </Text>
           </View>
         )
@@ -824,68 +944,6 @@ return (
         </View>
       )}
 
-      {ultimoProduto && (
-        <View style={styles.lastRead}>
-          <Text style={styles.sectionLabel}>ÚLTIMA LEITURA</Text>
-
-          <View
-            style={[
-              styles.lastReadCard,
-              { borderColor: CORES_STATUS[ultimoProduto.status].borda },
-            ]}
-          >
-            <View style={styles.lastReadTop}>
-              <Text style={styles.barcode}>
-                {ultimoProduto.produto.codigoBarras}
-              </Text>
-
-              <View
-                style={[
-                  styles.badge,
-                  { backgroundColor: CORES_STATUS[ultimoProduto.status].fundo },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    { color: CORES_STATUS[ultimoProduto.status].texto },
-                  ]}
-                >
-                  {CORES_STATUS[ultimoProduto.status].etiqueta}
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.productName}>
-              {ultimoProduto.produto.nome}
-            </Text>
-
-            <View style={styles.lastReadFooter}>
-              <Text style={styles.internalCode}>
-                Cód. interno: {ultimoProduto.produto.codigoInterno}
-              </Text>
-
-              <Text style={styles.quantity}>
-                Qtd: {ultimoProduto.quantidade}
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.summary}>
-        <View>
-          <Text style={styles.summaryLabel}>PRODUTOS LIDOS</Text>
-          <Text style={styles.summaryValue}>{produtos.length}</Text>
-        </View>
-
-        <View style={styles.summaryDivider} />
-
-        <View>
-          <Text style={styles.summaryLabel}>UNIDADES</Text>
-          <Text style={styles.summaryValue}>{totalUnidades}</Text>
-        </View>
-      </View>
 
       <View style={styles.listContainer}>
         <View style={styles.listHeader}>
@@ -950,9 +1008,39 @@ return (
                       {item.produto.nome}
                     </Text>
 
-                    <Text style={styles.productBarcode}>
-                      {item.produto.codigoBarras || 'sem código de barras'}
-                    </Text>
+                    {item.produto.esArAcondicionado ? (
+                      <View style={styles.acPartesRow}>
+                        <Text
+                          style={[
+                            styles.acParteBadge,
+                            item.vapLida
+                              ? styles.acParteBadgeOk
+                              : styles.acParteBadgePend,
+                          ]}
+                        >
+                          VAP {item.vapLida ? '✅' : '⏳'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.acParteBadge,
+                            item.condLida
+                              ? styles.acParteBadgeOk
+                              : styles.acParteBadgePend,
+                          ]}
+                        >
+                          COND{' '}
+                          {item.condLida
+                            ? '✅'
+                            : item.produto.codigoBarrasCond
+                            ? '⏳'
+                            : '—'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.productBarcode}>
+                        {item.produto.codigoBarras || 'sem código de barras'}
+                      </Text>
+                    )}
                   </View>
 
                   <View style={styles.quantityBox}>
@@ -1003,7 +1091,7 @@ return (
       {feedbackAmarelo && (
         <View pointerEvents="none" style={styles.yellowFeedback}>
           <Text style={styles.yellowFeedbackIcon}>?</Text>
-          <Text style={styles.yellowFeedbackText}>NADA ENCONTRADO</Text>
+          <Text style={styles.yellowFeedbackText}>{textoFeedbackAmarelo}</Text>
         </View>
       )}
 
@@ -1014,6 +1102,7 @@ return (
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
+          onSalvarCond={salvarCond}
         />
       )}
 
@@ -1152,199 +1241,6 @@ return (
         </View>
       )}
     </SafeAreaView>
-  );
-}
-
-type ModalEdicaoItemProps = {
-  item: LeituraConferencia;
-  onFechar: () => void;
-  onSalvarQuantidade: (novaQuantidade: number) => void;
-  onRemover: () => void;
-  onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
-};
-
-function ModalEdicaoItem({
-  item,
-  onFechar,
-  onSalvarQuantidade,
-  onRemover,
-  onSalvarProdutoNovo,
-}: ModalEdicaoItemProps) {
-  const [quantidadeTexto, setQuantidadeTexto] = useState(
-    String(item.quantidade),
-  );
-
-  const [nome, setNome] = useState(
-    item.status === 'desconhecido' ? '' : item.produto.nome,
-  );
-  const [marca, setMarca] = useState(item.produto.marca ?? '');
-  const [categoria, setCategoria] = useState(item.produto.categoria ?? '');
-  const [modelo, setModelo] = useState(item.produto.modelo ?? '');
-  const [unidade, setUnidade] = useState(item.produto.unidade ?? 'UN');
-  const [estoque, setEstoque] = useState(String(item.produto.estoque ?? 0));
-  const [url, setUrl] = useState(item.produto.url ?? '');
-
-  const ehDesconhecido = item.status === 'desconhecido';
-  const nomeValido = nome.trim().length >= 3;
-
-  return (
-    <View style={styles.overlay}>
-      <View style={styles.editCard}>
-        <ScrollView showsVerticalScrollIndicator={false}>
-
-          {/* Código de barras — somente leitura */}
-          <View style={styles.barcodeBox}>
-            <Text style={styles.barcodeBoxLabel}>CÓDIGO DE BARRAS</Text>
-            <Text style={styles.barcodeBoxValue}>
-              {item.produto.codigoBarras || 'sem código de barras'}
-            </Text>
-          </View>
-
-          {ehDesconhecido ? (
-            <>
-              <Text style={styles.editTitle}>
-                PRODUTO NÃO IDENTIFICADO
-              </Text>
-
-              <Text style={styles.editSubtitle}>
-                Preencha os dados para salvar este
-                código como um produto novo.
-              </Text>
-
-              <Text style={styles.editLabel}>NOME *</Text>
-              <TextInput
-                style={styles.editInput}
-                value={nome}
-                onChangeText={setNome}
-                placeholder="Nome do produto (mín. 3 caracteres)"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Text style={styles.editLabel}>MARCA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={marca}
-                onChangeText={setMarca}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Text style={styles.editLabel}>CATEGORIA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={categoria}
-                onChangeText={setCategoria}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Text style={styles.editLabel}>MODELO</Text>
-              <TextInput
-                style={styles.editInput}
-                value={modelo}
-                onChangeText={setModelo}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <View style={styles.editRow}>
-                <View style={styles.editRowItem}>
-                  <Text style={styles.editLabel}>UNIDADE</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={unidade}
-                    onChangeText={(v) => setUnidade(v.toUpperCase().slice(0, 8))}
-                    placeholder="UN"
-                    placeholderTextColor="#98A2B3"
-                    autoCapitalize="characters"
-                  />
-                </View>
-                <View style={styles.editRowItem}>
-                  <Text style={styles.editLabel}>ESTOQUE</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={estoque}
-                    onChangeText={setEstoque}
-                    placeholder="0"
-                    placeholderTextColor="#98A2B3"
-                    keyboardType="number-pad"
-                  />
-                </View>
-              </View>
-
-              <Text style={styles.editLabel}>URL / LINK</Text>
-              <TextInput
-                style={styles.editInput}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-                keyboardType="url"
-                autoCapitalize="none"
-              />
-
-              <Pressable
-                style={[
-                  styles.editSaveButton,
-                  !nomeValido && styles.editButtonDisabled,
-                ]}
-                disabled={!nomeValido}
-                onPress={() =>
-                  onSalvarProdutoNovo({
-                    nome: nome.trim(),
-                    marca: marca.trim() || undefined,
-                    categoria: categoria.trim() || undefined,
-                    modelo: modelo.trim() || undefined,
-                    unidade: unidade.trim() || 'UN',
-                    estoque: Number(estoque) || 0,
-                    url: url.trim() || undefined,
-                  })
-                }
-              >
-                <Text style={styles.editSaveButtonText}>
-                  SALVAR COMO PRODUTO NOVO
-                </Text>
-              </Pressable>
-
-              <View style={styles.editDivider} />
-            </>
-          ) : (
-            <Text style={styles.editTitle}>
-              {item.produto.nome}
-            </Text>
-          )}
-
-          <Text style={styles.editLabel}>QUANTIDADE</Text>
-          <TextInput
-            style={styles.editInput}
-            value={quantidadeTexto}
-            onChangeText={setQuantidadeTexto}
-            keyboardType="number-pad"
-          />
-
-          <Pressable
-            style={styles.editSaveButton}
-            onPress={() =>
-              onSalvarQuantidade(Number(quantidadeTexto) || 0)
-            }
-          >
-            <Text style={styles.editSaveButtonText}>
-              SALVAR QUANTIDADE
-            </Text>
-          </Pressable>
-
-          <Pressable style={styles.editRemoveButton} onPress={onRemover}>
-            <Text style={styles.editRemoveButtonText}>
-              REMOVER DA CONFERÊNCIA
-            </Text>
-          </Pressable>
-
-          <Pressable style={styles.editCancelButton} onPress={onFechar}>
-            <Text style={styles.editCancelButtonText}>CANCELAR</Text>
-          </Pressable>
-        </ScrollView>
-      </View>
-    </View>
   );
 }
 
@@ -1499,6 +1395,16 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
+  cameraHintPendente: {
+    backgroundColor: '#FFFAEB',
+    borderColor: '#F79009',
+  },
+
+  cameraHintTextPendente: {
+    color: '#B54708',
+    fontWeight: '800',
+  },
+
   statusBox: {
     minHeight: 36,
     marginHorizontal: 18,
@@ -1515,73 +1421,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#667085',
     fontWeight: '600',
-  },
-
-  lastRead: {
-    marginHorizontal: 18,
-    marginTop: 9,
-  },
-
-  sectionLabel: {
-    marginBottom: 5,
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#667085',
-    letterSpacing: 0.8,
-  },
-
-  lastReadCard: {
-    padding: 11,
-    borderRadius: 13,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-  },
-
-  lastReadTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-
-  badgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-  },
-
-  barcode: {
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  productName: {
-    marginTop: 4,
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#18212F',
-  },
-
-  lastReadFooter: {
-    marginTop: 5,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  internalCode: {
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  quantity: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#208AEF',
   },
 
   summary: {
@@ -1738,6 +1577,30 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 9,
     color: '#98A2B3',
+  },
+
+  acPartesRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    gap: 6,
+  },
+
+  acParteBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+
+  acParteBadgeOk: {
+    backgroundColor: '#ECFDF3',
+    color: '#027A48',
+  },
+
+  acParteBadgePend: {
+    backgroundColor: '#F2F4F7',
+    color: '#667085',
   },
 
   quantityBox: {

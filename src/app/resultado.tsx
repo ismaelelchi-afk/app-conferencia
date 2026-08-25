@@ -1,17 +1,17 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  atualizarProduto,
   atualizarStatusLeitura,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
@@ -22,6 +22,7 @@ import {
   obterResumoConferencia,
   obterResumoRevisao,
   removerLeituraConferencia,
+  validarCodigoBarrasCond,
 } from '@/database/database';
 import type {
   Conferencia,
@@ -33,6 +34,7 @@ import type {
   StatusRevisao,
 } from '@/models/produto';
 import { CORES_STATUS } from '@/constants/cores';
+import { ModalEdicaoItem } from '@/components/ModalEdicaoItem';
 
 // ============================================================
 // TELA DE RESULTADO / REVISÃO DA CONFERÊNCIA
@@ -61,6 +63,9 @@ export default function ResultadoScreen() {
 
   const [itemEditando, setItemEditando] =
     useState<LeituraConferencia | null>(null);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const itemYPositions = useRef<Record<string, number>>({});
 
   const modoRevisao = conferencia?.status === 'em_andamento';
 
@@ -163,13 +168,21 @@ export default function ResultadoScreen() {
         statusFinal,
       );
 
-      setLeituras((lista) =>
-        lista.map((l) =>
+      const ordemRevisao: Record<StatusRevisao, number> = {
+        pendente: 0,
+        ok: 1,
+        divergencia: 2,
+      };
+
+      const listaAtualizada = leituras
+        .map((l) =>
           l.produto.codigoInterno === item.produto.codigoInterno
             ? { ...l, statusRevisao: statusFinal }
             : l,
-        ),
-      );
+        )
+        .sort((a, b) => ordemRevisao[a.statusRevisao] - ordemRevisao[b.statusRevisao]);
+
+      setLeituras(listaAtualizada);
 
       const novoResumoRevisao = await obterResumoRevisao(conferenciaId);
       setResumoRevisao(novoResumoRevisao);
@@ -181,6 +194,19 @@ export default function ResultadoScreen() {
   // ==========================================================
   // EDIÇÃO DE ITEM
   // ==========================================================
+
+  function scrollParaStatus(status: StatusRevisao) {
+    const primeiro = leituras.find((l) => l.statusRevisao === status);
+    if (!primeiro) return;
+    const y = itemYPositions.current[primeiro.produto.codigoInterno];
+    if (y !== undefined) {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+    }
+  }
+
+  function scrollParaTopo() {
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  }
 
   function abrirEdicao(item: LeituraConferencia) {
     if (!modoRevisao) {
@@ -324,6 +350,38 @@ export default function ResultadoScreen() {
     }
   }
 
+  async function salvarCond(
+    codigoBarrasCond: string,
+  ): Promise<string | null> {
+    if (!itemEditando || !conferenciaValida) return null;
+
+    const erroValidacao = await validarCodigoBarrasCond(
+      codigoBarrasCond,
+      itemEditando.produto.codigoInterno,
+    );
+    if (erroValidacao) return erroValidacao;
+
+    try {
+      await atualizarProduto(
+        { ...itemEditando.produto, codigoBarrasCond },
+        itemEditando.produto.codigoInterno,
+      );
+
+      setLeituras((lista) =>
+        lista.map((item) =>
+          item.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? { ...item, produto: { ...item.produto, codigoBarrasCond } }
+            : item,
+        ),
+      );
+
+      fecharEdicao();
+      return null;
+    } catch {
+      return 'Não foi possível salvar o código COND.';
+    }
+  }
+
   // ==========================================================
   // CONFIRMAR FINALIZAÇÃO
   // ==========================================================
@@ -425,6 +483,7 @@ export default function ResultadoScreen() {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
@@ -488,28 +547,41 @@ export default function ResultadoScreen() {
           {/* Barra de progresso de revisão (somente modo revisão) */}
           {modoRevisao && resumoRevisao && (
             <View style={styles.revisaoBar}>
-              <View style={styles.revisaoItem}>
+              <Pressable
+                style={styles.revisaoItem}
+                onPress={() => scrollParaStatus('ok')}
+                disabled={resumoRevisao.ok === 0}
+              >
                 <Text style={styles.revisaoNumOk}>{resumoRevisao.ok}</Text>
                 <Text style={styles.revisaoLabelOk}>OK</Text>
-              </View>
+              </Pressable>
 
               <View style={styles.revisaoSeparator} />
 
-              <View style={styles.revisaoItem}>
+              <Pressable
+                style={styles.revisaoItem}
+                onPress={() => scrollParaStatus('divergencia')}
+                disabled={resumoRevisao.divergencia === 0}
+              >
                 <Text style={styles.revisaoNumDiv}>
                   {resumoRevisao.divergencia}
                 </Text>
                 <Text style={styles.revisaoLabelDiv}>Divergência</Text>
-              </View>
+              </Pressable>
 
               <View style={styles.revisaoSeparator} />
 
-              <View style={styles.revisaoItem}>
+              <Pressable
+                style={styles.revisaoItem}
+                onPress={() => scrollParaStatus('pendente')}
+                disabled={resumoRevisao.pendente === 0}
+              >
                 <Text style={styles.revisaoNumPend}>
                   {resumoRevisao.pendente}
                 </Text>
                 <Text style={styles.revisaoLabelPend}>Pendente</Text>
-              </View>
+              </Pressable>
+
             </View>
           )}
 
@@ -548,6 +620,10 @@ export default function ResultadoScreen() {
               return (
                 <View
                   key={item.produto.codigoInterno}
+                  onLayout={(e) => {
+                    itemYPositions.current[item.produto.codigoInterno] =
+                      e.nativeEvent.layout.y;
+                  }}
                   style={[
                     styles.productCard,
                     { borderColor: cor.borda, backgroundColor: cor.fundo },
@@ -592,6 +668,37 @@ export default function ResultadoScreen() {
                         </View>
                       </View>
 
+                      {/* Indicadores VAP/COND para ar condicionado */}
+                      {item.produto.esArAcondicionado && (
+                        <View style={styles.acPartesRow}>
+                          <Text
+                            style={[
+                              styles.acParteBadge,
+                              item.vapLida
+                                ? styles.acParteBadgeOk
+                                : styles.acParteBadgePend,
+                            ]}
+                          >
+                            VAP {item.vapLida ? '✅' : '⏳'}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.acParteBadge,
+                              item.condLida
+                                ? styles.acParteBadgeOk
+                                : styles.acParteBadgePend,
+                            ]}
+                          >
+                            COND{' '}
+                            {item.condLida
+                              ? '✅'
+                              : item.produto.codigoBarrasCond
+                              ? '⏳'
+                              : '— Não cadastrada'}
+                          </Text>
+                        </View>
+                      )}
+
                       {modoRevisao && (
                         <Text style={styles.editHint}>
                           toque para editar quantidade
@@ -603,25 +710,33 @@ export default function ResultadoScreen() {
                   {/* Botões de revisão */}
                   {modoRevisao && (
                     <View style={styles.revisaoBotoes}>
-                      <Pressable
-                        style={[
-                          styles.btnRevisao,
-                          styles.btnOk,
-                          item.statusRevisao === 'ok' &&
-                            styles.btnOkAtivo,
-                        ]}
-                        onPress={() => void alterarRevisao(item, 'ok')}
-                      >
-                        <Text
-                          style={[
-                            styles.btnRevisaoTexto,
-                            item.statusRevisao === 'ok' &&
-                              styles.btnOkTextoAtivo,
-                          ]}
-                        >
-                          ✓ OK
-                        </Text>
-                      </Pressable>
+                      {(() => {
+                        const acIncompleto =
+                          item.produto.esArAcondicionado &&
+                          (!item.vapLida || !item.condLida);
+                        return (
+                          <Pressable
+                            style={[
+                              styles.btnRevisao,
+                              styles.btnOk,
+                              item.statusRevisao === 'ok' && styles.btnOkAtivo,
+                              acIncompleto && styles.btnRevisaoDesabilitado,
+                            ]}
+                            onPress={() => void alterarRevisao(item, 'ok')}
+                            disabled={acIncompleto}
+                          >
+                            <Text
+                              style={[
+                                styles.btnRevisaoTexto,
+                                item.statusRevisao === 'ok' &&
+                                  styles.btnOkTextoAtivo,
+                              ]}
+                            >
+                              ✓ OK
+                            </Text>
+                          </Pressable>
+                        );
+                      })()}
 
                       <Pressable
                         style={[
@@ -725,6 +840,7 @@ export default function ResultadoScreen() {
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
+          onSalvarCond={salvarCond}
         />
       )}
 
@@ -802,6 +918,7 @@ export default function ResultadoScreen() {
           </View>
         </View>
       )}
+
     </SafeAreaView>
   );
 }
@@ -809,132 +926,6 @@ export default function ResultadoScreen() {
 // ============================================================
 // MODAL DE EDIÇÃO DE UM ITEM
 // ============================================================
-
-type ModalEdicaoItemProps = {
-  item: LeituraConferencia;
-  onFechar: () => void;
-  onSalvarQuantidade: (novaQuantidade: number) => void;
-  onRemover: () => void;
-  onSalvarProdutoNovo: (dados: DadosProdutoRapido) => void;
-};
-
-function ModalEdicaoItem({
-  item,
-  onFechar,
-  onSalvarQuantidade,
-  onRemover,
-  onSalvarProdutoNovo,
-}: ModalEdicaoItemProps) {
-  const [quantidadeTexto, setQuantidadeTexto] = useState(
-    String(item.quantidade),
-  );
-
-  const [nome, setNome] = useState(
-    item.status === 'desconhecido' ? '' : item.produto.nome,
-  );
-
-  const [marca, setMarca] = useState(item.produto.marca ?? '');
-  const [categoria, setCategoria] = useState(item.produto.categoria ?? '');
-
-  const ehDesconhecido = item.status === 'desconhecido';
-
-  return (
-    <View style={styles.overlay}>
-      <View style={styles.editCard}>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <Text style={styles.editBarcode}>
-            {item.produto.codigoBarras || 'sem código de barras'}
-          </Text>
-
-          {ehDesconhecido ? (
-            <>
-              <Text style={styles.editTitle}>PRODUTO NÃO IDENTIFICADO</Text>
-
-              <Text style={styles.editSubtitle}>
-                Preencha o nome para salvar este código como um produto novo.
-              </Text>
-
-              <Text style={styles.editLabel}>NOME *</Text>
-              <TextInput
-                style={styles.editInput}
-                value={nome}
-                onChangeText={setNome}
-                placeholder="Nome do produto"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Text style={styles.editLabel}>MARCA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={marca}
-                onChangeText={setMarca}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Text style={styles.editLabel}>CATEGORIA</Text>
-              <TextInput
-                style={styles.editInput}
-                value={categoria}
-                onChangeText={setCategoria}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
-
-              <Pressable
-                style={[
-                  styles.editSaveButton,
-                  !nome.trim() && styles.editButtonDisabled,
-                ]}
-                disabled={!nome.trim()}
-                onPress={() =>
-                  onSalvarProdutoNovo({
-                    nome: nome.trim(),
-                    marca: marca.trim() || undefined,
-                    categoria: categoria.trim() || undefined,
-                  })
-                }
-              >
-                <Text style={styles.editSaveButtonText}>
-                  SALVAR COMO PRODUTO NOVO
-                </Text>
-              </Pressable>
-
-              <View style={styles.editDivider} />
-            </>
-          ) : (
-            <Text style={styles.editTitle}>{item.produto.nome}</Text>
-          )}
-
-          <Text style={styles.editLabel}>QUANTIDADE</Text>
-          <TextInput
-            style={styles.editInput}
-            value={quantidadeTexto}
-            onChangeText={setQuantidadeTexto}
-            keyboardType="number-pad"
-          />
-
-          <Pressable
-            style={styles.editSaveButton}
-            onPress={() => onSalvarQuantidade(Number(quantidadeTexto) || 0)}
-          >
-            <Text style={styles.editSaveButtonText}>SALVAR QUANTIDADE</Text>
-          </Pressable>
-
-          <Pressable style={styles.editRemoveButton} onPress={onRemover}>
-            <Text style={styles.editRemoveButtonText}>
-              REMOVER DA CONFERÊNCIA
-            </Text>
-          </Pressable>
-
-          <Pressable style={styles.editCancelButton} onPress={onFechar}>
-            <Text style={styles.editCancelButtonText}>CANCELAR</Text>
-          </Pressable>
-        </ScrollView>
-      </View>
-    </View>
-  );
-}
 
 // ============================================================
 // ESTILOS
@@ -1286,6 +1277,31 @@ const styles = StyleSheet.create({
     color: '#98A2B3',
   },
 
+  acPartesRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+
+  acParteBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+
+  acParteBadgeOk: {
+    backgroundColor: '#ECFDF3',
+    color: '#027A48',
+  },
+
+  acParteBadgePend: {
+    backgroundColor: '#F2F4F7',
+    color: '#667085',
+  },
+
   // Botões de revisão
   revisaoBotoes: {
     flexDirection: 'row',
@@ -1319,6 +1335,10 @@ const styles = StyleSheet.create({
   },
 
   btnPend: {},
+
+  btnRevisaoDesabilitado: {
+    opacity: 0.3,
+  },
 
   btnPendAtivo: {
     backgroundColor: '#98A2B3',
@@ -1503,108 +1523,5 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
-  // Modal de edição de item
-  editCard: {
-    width: '100%',
-    maxWidth: 420,
-    maxHeight: '85%',
-    padding: 22,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-  },
-
-  editBarcode: {
-    fontSize: 11,
-    color: '#98A2B3',
-    textAlign: 'center',
-  },
-
-  editTitle: {
-    marginTop: 4,
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#18212F',
-    textAlign: 'center',
-  },
-
-  editSubtitle: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 17,
-    color: '#667085',
-    textAlign: 'center',
-  },
-
-  editLabel: {
-    marginTop: 16,
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#667085',
-    letterSpacing: 0.6,
-  },
-
-  editInput: {
-    marginTop: 6,
-    height: 46,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E1E5EA',
-    paddingHorizontal: 14,
-    fontSize: 14,
-    color: '#18212F',
-  },
-
-  editSaveButton: {
-    height: 50,
-    marginTop: 18,
-    borderRadius: 13,
-    backgroundColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  editButtonDisabled: {
-    opacity: 0.5,
-  },
-
-  editSaveButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-
-  editDivider: {
-    height: 1,
-    backgroundColor: '#EEF1F4',
-    marginTop: 20,
-  },
-
-  editRemoveButton: {
-    height: 48,
-    marginTop: 12,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#F04438',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  editRemoveButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#F04438',
-  },
-
-  editCancelButton: {
-    height: 46,
-    marginTop: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  editCancelButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#667085',
-  },
 });
+

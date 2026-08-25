@@ -138,14 +138,66 @@ export async function inicializarDatabase(): Promise<void> {
     ON leituras_conferencia(conferencia_id);
   `);
 
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_leituras_codigo_interno
+    ON leituras_conferencia(codigo_interno);
+  `);
+
   // Migração: adiciona status_revisao se ainda não existir.
-  try {
+  const colStatusRevisao = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('leituras_conferencia') WHERE name = 'status_revisao';`,
+  );
+  if (!colStatusRevisao || colStatusRevisao.cnt === 0) {
     await db.execAsync(`
       ALTER TABLE leituras_conferencia
       ADD COLUMN status_revisao TEXT NOT NULL DEFAULT 'pendente';
     `);
-  } catch {
-    // Coluna já existe — ignorar.
+  }
+
+  // Migração: adiciona descricao em produtos se ainda não existir.
+  const colDescricao = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'descricao';`,
+  );
+  if (!colDescricao || colDescricao.cnt === 0) {
+    await db.execAsync(`ALTER TABLE produtos ADD COLUMN descricao TEXT;`);
+  }
+
+  // Migração: ar condicionado — flag e código COND em produtos.
+  const colEsAr = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'es_ar_acondicionado';`,
+  );
+  if (!colEsAr || colEsAr.cnt === 0) {
+    await db.execAsync(
+      `ALTER TABLE produtos ADD COLUMN es_ar_acondicionado INTEGER NOT NULL DEFAULT 0;`,
+    );
+  }
+
+  const colBarrasCond = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'codigo_barras_cond';`,
+  );
+  if (!colBarrasCond || colBarrasCond.cnt === 0) {
+    await db.execAsync(
+      `ALTER TABLE produtos ADD COLUMN codigo_barras_cond TEXT;`,
+    );
+  }
+
+  // Migração: ar condicionado — rastreio de VAP/COND em leituras_conferencia.
+  const colVapLida = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('leituras_conferencia') WHERE name = 'vap_lida';`,
+  );
+  if (!colVapLida || colVapLida.cnt === 0) {
+    await db.execAsync(
+      `ALTER TABLE leituras_conferencia ADD COLUMN vap_lida INTEGER NOT NULL DEFAULT 0;`,
+    );
+  }
+
+  const colCondLida = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('leituras_conferencia') WHERE name = 'cond_lida';`,
+  );
+  if (!colCondLida || colCondLida.cnt === 0) {
+    await db.execAsync(
+      `ALTER TABLE leituras_conferencia ADD COLUMN cond_lida INTEGER NOT NULL DEFAULT 0;`,
+    );
   }
 
   // ----------------------------------------------------------
@@ -202,42 +254,30 @@ export async function salvarConfiguracao(
 type ProdutoSQLite = {
   codigo_interno: string;
   codigo_barras: string | null;
+  codigo_barras_cond: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
   modelo: string | null;
-  unidade: string | null;
-  estoque: number | null;
+  descricao: string | null;
   ativo: number;
-  url: string | null;
-  especificacoes: string | null;
   origem: string;
+  es_ar_acondicionado: number;
 };
 
 function converterProduto(produto: ProdutoSQLite): Produto {
-  let especificacoes: Record<string, string> | undefined;
-
-  if (produto.especificacoes) {
-    try {
-      especificacoes = JSON.parse(produto.especificacoes);
-    } catch {
-      especificacoes = undefined;
-    }
-  }
-
   return {
     codigoInterno: produto.codigo_interno,
     codigoBarras: produto.codigo_barras ?? '',
+    codigoBarrasCond: produto.codigo_barras_cond ?? undefined,
     nome: produto.nome,
     marca: produto.marca ?? undefined,
     categoria: produto.categoria ?? undefined,
     modelo: produto.modelo ?? undefined,
-    unidade: produto.unidade ?? undefined,
-    estoque: produto.estoque ?? 0,
+    descricao: produto.descricao ?? undefined,
     ativo: produto.ativo === 1,
-    url: produto.url ?? undefined,
-    especificacoes,
     origem: (produto.origem as Produto['origem']) ?? 'catalogo',
+    esArAcondicionado: produto.es_ar_acondicionado === 1,
   };
 }
 
@@ -245,7 +285,7 @@ function converterProduto(produto: ProdutoSQLite): Produto {
 // ADICIONAR PRODUTO
 // ============================================================
 
-export async function adicionarProduto(produto: Produto): Promise<void> {
+async function adicionarProduto(produto: Produto): Promise<void> {
   const db = await obterDatabase();
 
   await db.runAsync(
@@ -253,31 +293,29 @@ export async function adicionarProduto(produto: Produto): Promise<void> {
       INSERT INTO produtos (
         codigo_interno,
         codigo_barras,
+        codigo_barras_cond,
         nome,
         marca,
         categoria,
         modelo,
-        unidade,
-        estoque,
+        descricao,
         ativo,
-        url,
-        especificacoes,
-        origem
+        origem,
+        es_ar_acondicionado
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `,
     produto.codigoInterno,
     produto.codigoBarras || null,
+    produto.codigoBarrasCond || null,
     produto.nome,
     produto.marca ?? null,
     produto.categoria ?? null,
     produto.modelo ?? null,
-    produto.unidade ?? null,
-    produto.estoque ?? 0,
+    produto.descricao ?? null,
     produto.ativo ? 1 : 0,
-    produto.url ?? null,
-    produto.especificacoes ? JSON.stringify(produto.especificacoes) : null,
     produto.origem,
+    produto.esArAcondicionado ? 1 : 0,
   );
 }
 
@@ -386,41 +424,55 @@ export async function obterProdutos(): Promise<Produto[]> {
 // ACTUALIZAR PRODUCTO
 // ============================================================
 
-export async function atualizarProduto(produto: Produto): Promise<boolean> {
+// codigoBarras é IMUTÁVEL — nunca é atualizado.
+// codigoInterno PODE ser alterado; codigoInternoOriginal identifica
+// o registro atual na BD e é propagado a leituras_conferencia.
+export async function atualizarProduto(
+  produto: Produto,
+  codigoInternoOriginal: string,
+): Promise<boolean> {
   const db = await obterDatabase();
 
-  const resultado = await db.runAsync(
-    `
-      UPDATE produtos
-      SET
-        codigo_barras = ?,
-        nome = ?,
-        marca = ?,
-        categoria = ?,
-        modelo = ?,
-        unidade = ?,
-        estoque = ?,
-        ativo = ?,
-        url = ?,
-        especificacoes = ?,
-        origem = ?
-      WHERE codigo_interno = ?;
-    `,
-    produto.codigoBarras || null,
-    produto.nome,
-    produto.marca ?? null,
-    produto.categoria ?? null,
-    produto.modelo ?? null,
-    produto.unidade ?? null,
-    produto.estoque ?? 0,
-    produto.ativo ? 1 : 0,
-    produto.url ?? null,
-    produto.especificacoes ? JSON.stringify(produto.especificacoes) : null,
-    produto.origem,
-    produto.codigoInterno,
-  );
+  try {
+    await db.withTransactionAsync(async () => {
+      if (produto.codigoInterno !== codigoInternoOriginal) {
+        await db.runAsync(
+          `UPDATE leituras_conferencia
+           SET codigo_interno = ?
+           WHERE codigo_interno = ?;`,
+          produto.codigoInterno,
+          codigoInternoOriginal,
+        );
+      }
 
-  return resultado.changes > 0;
+      await db.runAsync(
+        `UPDATE produtos
+         SET
+           codigo_interno = ?,
+           nome = ?,
+           marca = ?,
+           categoria = ?,
+           modelo = ?,
+           descricao = ?,
+           es_ar_acondicionado = ?,
+           codigo_barras_cond = ?
+         WHERE codigo_interno = ?;`,
+        produto.codigoInterno,
+        produto.nome,
+        produto.marca ?? null,
+        produto.categoria ?? null,
+        produto.modelo ?? null,
+        produto.descricao ?? null,
+        produto.esArAcondicionado ? 1 : 0,
+        produto.codigoBarrasCond || null,
+        codigoInternoOriginal,
+      );
+    });
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================
@@ -435,7 +487,7 @@ export async function removerProduto(
   const resultado = await db.runAsync(
     `
       UPDATE produtos
-      SET ativo = 0
+      SET ativo = 0, codigo_barras = NULL
       WHERE codigo_interno = ?;
     `,
     codigoInterno,
@@ -520,14 +572,10 @@ export async function importarProdutosRamsons(): Promise<number> {
             marca,
             categoria,
             modelo,
-            unidade,
-            estoque,
-            ativo,
-            url,
-            especificacoes,
+            descricao,
             origem
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
         `,
         produto.codigoInterno,
         produto.codigoBarras || null,
@@ -535,13 +583,7 @@ export async function importarProdutosRamsons(): Promise<number> {
         produto.marca ?? null,
         produto.categoria ?? null,
         produto.modelo ?? null,
-        produto.unidade ?? 'UN',
-        produto.estoque ?? 0,
-        produto.ativo === false ? 0 : 1,
-        produto.url ?? null,
-        produto.especificacoes
-          ? JSON.stringify(produto.especificacoes)
-          : null,
+        produto.descricao ?? null,
       );
     }
   });
@@ -576,14 +618,10 @@ export async function reimportarCatalogoEmbutido(): Promise<number> {
             marca,
             categoria,
             modelo,
-            unidade,
-            estoque,
-            ativo,
-            url,
-            especificacoes,
+            descricao,
             origem
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
         `,
         produto.codigoInterno,
         produto.codigoBarras || null,
@@ -591,13 +629,7 @@ export async function reimportarCatalogoEmbutido(): Promise<number> {
         produto.marca ?? null,
         produto.categoria ?? null,
         produto.modelo ?? null,
-        produto.unidade ?? 'UN',
-        produto.estoque ?? 0,
-        produto.ativo === false ? 0 : 1,
-        produto.url ?? null,
-        produto.especificacoes
-          ? JSON.stringify(produto.especificacoes)
-          : null,
+        produto.descricao ?? null,
       );
     }
   });
@@ -666,14 +698,10 @@ export async function importarCatalogoExterno(
             marca,
             categoria,
             modelo,
-            unidade,
-            estoque,
-            ativo,
-            url,
-            especificacoes,
+            descricao,
             origem
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
         `,
         produto.codigoInterno,
         produto.codigoBarras || null,
@@ -681,11 +709,7 @@ export async function importarCatalogoExterno(
         produto.marca ?? null,
         produto.categoria ?? null,
         produto.modelo ?? null,
-        produto.unidade ?? 'UN',
-        produto.estoque ?? 0,
-        produto.ativo === false ? 0 : 1,
-        produto.url ?? null,
-        produto.especificacoes ? JSON.stringify(produto.especificacoes) : null,
+        produto.descricao ?? null,
       );
     }
   });
@@ -696,19 +720,63 @@ export async function importarCatalogoExterno(
 }
 
 // ============================================================
+// EXPORTAR CATÁLOGO COMPLETO (backup do dispositivo)
+// Retorna um JSON com TODOS os produtos (todas as origens)
+// no mesmo formato aceito por importarCatalogoExterno.
+// ============================================================
+
+export async function exportarCatalogo(): Promise<string> {
+  const db = await obterDatabase();
+
+  const rows = await db.getAllAsync<{
+    codigo_interno: string;
+    codigo_barras: string | null;
+    nome: string;
+    marca: string | null;
+    categoria: string | null;
+    modelo: string | null;
+    descricao: string | null;
+  }>(`
+    SELECT
+      codigo_interno,
+      codigo_barras,
+      nome,
+      marca,
+      categoria,
+      modelo,
+      descricao
+    FROM produtos
+    WHERE ativo = 1
+    ORDER BY nome COLLATE NOCASE ASC;
+  `);
+
+  const lista: ProdutoImportacao[] = rows.map((r) => ({
+    codigoInterno: r.codigo_interno,
+    codigoBarras: r.codigo_barras,
+    nome: r.nome,
+    marca: r.marca,
+    categoria: r.categoria,
+    modelo: r.modelo,
+    descricao: r.descricao,
+  }));
+
+  return JSON.stringify(lista, null, 2);
+}
+
+// ============================================================
 // CRIAR PRODUTO MANUAL (formulário "Cadastrar produto")
 // ============================================================
 
 export type DadosProdutoManual = {
   codigoInterno?: string;
   codigoBarras?: string | null;
+  codigoBarrasCond?: string | null;
   nome: string;
   marca?: string;
   categoria?: string;
   modelo?: string;
-  unidade?: string;
-  estoque?: number;
-  url?: string;
+  descricao?: string;
+  esArAcondicionado?: boolean;
 };
 
 export async function criarProdutoManual(
@@ -719,15 +787,15 @@ export async function criarProdutoManual(
   const produto: Produto = {
     codigoInterno,
     codigoBarras: dados.codigoBarras ?? '',
+    codigoBarrasCond: dados.codigoBarrasCond ?? undefined,
     nome: dados.nome,
     marca: dados.marca,
     categoria: dados.categoria,
     modelo: dados.modelo,
-    unidade: dados.unidade ?? 'UN',
-    estoque: dados.estoque ?? 0,
+    descricao: dados.descricao,
     ativo: true,
-    url: dados.url,
     origem: 'manual',
+    esArAcondicionado: dados.esArAcondicionado ?? false,
   };
 
   await adicionarProduto(produto);
@@ -750,16 +818,14 @@ export async function registrarProdutoDesconhecido(
   }
 
   const codigoInterno = gerarCodigoInternoDesconhecido(codigoBarras);
-  const unidadePadrao = await obterConfiguracao('unidade_padrao', 'UN');
 
   const produto: Produto = {
     codigoInterno,
     codigoBarras,
     nome: `Produto não identificado (${codigoBarras})`,
-    unidade: unidadePadrao,
-    estoque: 0,
     ativo: true,
     origem: 'desconhecido',
+    esArAcondicionado: false,
   };
 
   await adicionarProduto(produto);
@@ -771,35 +837,48 @@ export async function registrarProdutoDesconhecido(
 // COMPLETAR PRODUTO DESCONHECIDO
 // ============================================================
 
+// Retorna o codigoInterno efetivo após a operação
+// (pode ter mudado se dados.codigoInterno foi fornecido).
 export async function completarProdutoDesconhecido(
-  codigoInterno: string,
+  codigoInternoOriginal: string,
   dados: DadosProdutoRapido,
-): Promise<void> {
+): Promise<string> {
   const db = await obterDatabase();
+  const novoCodigoInterno = dados.codigoInterno?.trim() || codigoInternoOriginal;
 
-  await db.runAsync(
-    `
-      UPDATE produtos
-      SET
-        nome = ?,
-        marca = ?,
-        categoria = ?,
-        modelo = ?,
-        unidade = ?,
-        estoque = ?,
-        url = ?,
-        origem = 'manual'
-      WHERE codigo_interno = ?;
-    `,
-    dados.nome,
-    dados.marca ?? null,
-    dados.categoria ?? null,
-    dados.modelo ?? null,
-    dados.unidade ?? null,
-    dados.estoque ?? 0,
-    dados.url ?? null,
-    codigoInterno,
-  );
+  await db.withTransactionAsync(async () => {
+    if (novoCodigoInterno !== codigoInternoOriginal) {
+      await db.runAsync(
+        `UPDATE leituras_conferencia
+         SET codigo_interno = ?
+         WHERE codigo_interno = ?;`,
+        novoCodigoInterno,
+        codigoInternoOriginal,
+      );
+    }
+
+    await db.runAsync(
+      `UPDATE produtos
+       SET
+         codigo_interno = ?,
+         nome = ?,
+         marca = ?,
+         categoria = ?,
+         modelo = ?,
+         descricao = ?,
+         origem = 'manual'
+       WHERE codigo_interno = ?;`,
+      novoCodigoInterno,
+      dados.nome,
+      dados.marca ?? null,
+      dados.categoria ?? null,
+      dados.modelo ?? null,
+      dados.descricao ?? null,
+      codigoInternoOriginal,
+    );
+  });
+
+  return novoCodigoInterno;
 }
 
 // ============================================================
@@ -1102,18 +1181,19 @@ type LeituraConferenciaSQLite = {
   ultima_leitura: string;
   status: StatusLeitura;
   status_revisao: StatusRevisao;
+  vap_lida: number;
+  cond_lida: number;
   codigo_interno: string;
   codigo_barras: string | null;
+  codigo_barras_cond: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
   modelo: string | null;
-  unidade: string | null;
-  estoque: number | null;
+  descricao: string | null;
   ativo: number;
-  url: string | null;
-  especificacoes: string | null;
   origem: string;
+  es_ar_acondicionado: number;
 };
 
 export async function obterLeiturasConferencia(
@@ -1130,18 +1210,19 @@ export async function obterLeiturasConferencia(
         leituras_conferencia.ultima_leitura AS ultima_leitura,
         leituras_conferencia.status AS status,
         leituras_conferencia.status_revisao AS status_revisao,
+        leituras_conferencia.vap_lida AS vap_lida,
+        leituras_conferencia.cond_lida AS cond_lida,
         produtos.codigo_interno AS codigo_interno,
         produtos.codigo_barras AS codigo_barras,
+        produtos.codigo_barras_cond AS codigo_barras_cond,
         produtos.nome AS nome,
         produtos.marca AS marca,
         produtos.categoria AS categoria,
         produtos.modelo AS modelo,
-        produtos.unidade AS unidade,
-        produtos.estoque AS estoque,
+        produtos.descricao AS descricao,
         produtos.ativo AS ativo,
-        produtos.url AS url,
-        produtos.especificacoes AS especificacoes,
-        produtos.origem AS origem
+        produtos.origem AS origem,
+        produtos.es_ar_acondicionado AS es_ar_acondicionado
       FROM leituras_conferencia
       INNER JOIN produtos
         ON produtos.codigo_interno = leituras_conferencia.codigo_interno
@@ -1156,22 +1237,23 @@ export async function obterLeiturasConferencia(
     produto: converterProduto({
       codigo_interno: item.codigo_interno,
       codigo_barras: item.codigo_barras,
+      codigo_barras_cond: item.codigo_barras_cond,
       nome: item.nome,
       marca: item.marca,
       categoria: item.categoria,
       modelo: item.modelo,
-      unidade: item.unidade,
-      estoque: item.estoque,
+      descricao: item.descricao,
       ativo: item.ativo,
-      url: item.url,
-      especificacoes: item.especificacoes,
       origem: item.origem,
+      es_ar_acondicionado: item.es_ar_acondicionado,
     }),
     quantidade: item.quantidade,
     primeiraLeitura: item.primeira_leitura,
     ultimaLeitura: item.ultima_leitura,
     status: item.status,
     statusRevisao: item.status_revisao,
+    vapLida: item.vap_lida === 1,
+    condLida: item.cond_lida === 1,
   }));
 }
 
@@ -1315,14 +1397,10 @@ export async function resetarBancoDeDados(): Promise<number> {
             marca,
             categoria,
             modelo,
-            unidade,
-            estoque,
-            ativo,
-            url,
-            especificacoes,
+            descricao,
             origem
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
         `,
         produto.codigoInterno,
         produto.codigoBarras || null,
@@ -1330,13 +1408,7 @@ export async function resetarBancoDeDados(): Promise<number> {
         produto.marca ?? null,
         produto.categoria ?? null,
         produto.modelo ?? null,
-        produto.unidade ?? 'UN',
-        produto.estoque ?? 0,
-        produto.ativo === false ? 0 : 1,
-        produto.url ?? null,
-        produto.especificacoes
-          ? JSON.stringify(produto.especificacoes)
-          : null,
+        produto.descricao ?? null,
       );
     }
   });
@@ -1451,6 +1523,145 @@ export async function marcarStatusRevisao(
     conferenciaId,
     codigoInterno,
   );
+}
+
+// ============================================================
+// AR CONDICIONADO — BUSCA EM VAP E COND
+// Retorna o produto pai e qual barcode foi encontrado.
+// ============================================================
+
+export type BuscaCodigoBarrasResult = {
+  produto: Produto | undefined;
+  parte: 'vap' | 'cond' | null;
+};
+
+export async function buscarPorCodigoBarrasGeral(
+  codigoBarras: string,
+): Promise<BuscaCodigoBarrasResult> {
+  const db = await obterDatabase();
+
+  const resultadoVap = await db.getFirstAsync<ProdutoSQLite>(
+    `SELECT * FROM produtos WHERE codigo_barras = ? AND ativo = 1 LIMIT 1;`,
+    codigoBarras,
+  );
+  if (resultadoVap) {
+    const produto = converterProduto(resultadoVap);
+    return { produto, parte: produto.esArAcondicionado ? 'vap' : null };
+  }
+
+  const resultadoCond = await db.getFirstAsync<ProdutoSQLite>(
+    `SELECT * FROM produtos WHERE codigo_barras_cond = ? AND ativo = 1 LIMIT 1;`,
+    codigoBarras,
+  );
+  if (resultadoCond) {
+    return { produto: converterProduto(resultadoCond), parte: 'cond' };
+  }
+
+  return { produto: undefined, parte: null };
+}
+
+// ============================================================
+// AR CONDICIONADO — REGISTRAR LEITURA DE VAP OU COND
+// ============================================================
+
+export type ResultadoLeituraAC =
+  | 'inserida'
+  | 'atualizada'
+  | 'completa'
+  | 'ja_lido';
+
+export async function registrarLeituraAC(
+  conferenciaId: number,
+  codigoInterno: string,
+  parte: 'vap' | 'cond',
+  primeiraLeitura: string,
+  ultimaLeitura: string,
+): Promise<ResultadoLeituraAC> {
+  const db = await obterDatabase();
+
+  const existente = await db.getFirstAsync<{
+    id: number;
+    vap_lida: number;
+    cond_lida: number;
+  }>(
+    `SELECT id, vap_lida, cond_lida
+     FROM leituras_conferencia
+     WHERE conferencia_id = ? AND codigo_interno = ?
+     LIMIT 1;`,
+    conferenciaId,
+    codigoInterno,
+  );
+
+  if (!existente) {
+    const vapLida = parte === 'vap' ? 1 : 0;
+    const condLida = parte === 'cond' ? 1 : 0;
+    await db.runAsync(
+      `INSERT INTO leituras_conferencia
+         (conferencia_id, codigo_interno, quantidade, primeira_leitura, ultima_leitura, status, vap_lida, cond_lida)
+       VALUES (?, ?, 1, ?, ?, 'normal', ?, ?);`,
+      conferenciaId,
+      codigoInterno,
+      primeiraLeitura,
+      ultimaLeitura,
+      vapLida,
+      condLida,
+    );
+    return 'inserida';
+  }
+
+  const jaLida =
+    parte === 'vap' ? existente.vap_lida === 1 : existente.cond_lida === 1;
+  if (jaLida) {
+    return 'ja_lido';
+  }
+
+  const campo = parte === 'vap' ? 'vap_lida' : 'cond_lida';
+  await db.runAsync(
+    `UPDATE leituras_conferencia SET ${campo} = 1, ultima_leitura = ? WHERE id = ?;`,
+    ultimaLeitura,
+    existente.id,
+  );
+
+  const vapLidaFinal = parte === 'vap' ? 1 : existente.vap_lida;
+  const condLidaFinal = parte === 'cond' ? 1 : existente.cond_lida;
+  return vapLidaFinal === 1 && condLidaFinal === 1 ? 'completa' : 'atualizada';
+}
+
+// ============================================================
+// AR CONDICIONADO — VALIDAR CÓDIGO BARRAS COND
+// Garante que o código não está em uso em outro produto.
+// Retorna mensagem de erro ou null se válido.
+// ============================================================
+
+export async function validarCodigoBarrasCond(
+  codigoBarrasCond: string,
+  codigoInternoExcluir: string,
+): Promise<string | null> {
+  const db = await obterDatabase();
+
+  const comoVap = await db.getFirstAsync<{ codigo_interno: string }>(
+    `SELECT codigo_interno FROM produtos
+     WHERE codigo_barras = ? AND codigo_interno != ? AND ativo = 1
+     LIMIT 1;`,
+    codigoBarrasCond,
+    codigoInternoExcluir,
+  );
+  if (comoVap) {
+    return `Código já é a VAP do produto ${comoVap.codigo_interno}.`;
+  }
+
+  const comoCond = await db.getFirstAsync<{ codigo_interno: string }>(
+    `SELECT codigo_interno FROM produtos
+     WHERE codigo_barras_cond = ? AND codigo_interno != ? AND ativo = 1
+     LIMIT 1;`,
+    codigoBarrasCond,
+    codigoInternoExcluir,
+  );
+  if (comoCond) {
+    return `Código já é a COND do produto ${comoCond.codigo_interno}.`;
+  }
+
+  return null;
 }
 
 // ============================================================
