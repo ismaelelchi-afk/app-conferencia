@@ -38,6 +38,12 @@ yarn-error.*
 
 example
 
+# Claude Code
+.claude/
+
+# Datos locales / catálogo de desarrollo
+data/
+
 # generated native folders
 /ios
 /android

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
   View,
 } from 'react-native';
 
+import { formatarCodigoInterno } from '@/database/database';
 import type {
   DadosProdutoRapido,
   LeituraConferencia,
@@ -15,11 +17,20 @@ import type {
 } from '@/models/produto';
 
 type DadosProduto = {
+  codigoInterno?: string;
   nome: string;
   marca?: string;
   categoria?: string;
+  subcategoria?: string;
   modelo?: string;
-  descricao?: string;
+  capacidad?: string;
+  tecnologia?: string;
+  ciclo?: string;
+  voltaje?: string;
+  color?: string;
+  peso?: string;
+  dimensiones?: string;
+  link?: string;
 };
 
 type Props = {
@@ -31,7 +42,7 @@ type Props = {
   onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
   onSalvarDadosProduto?: (dados: DadosProduto) => Promise<string | null>;
   itensConferencia?: LeituraConferencia[];
-  onParear?: (codigoInternoSocio: string, codigoPar: string) => Promise<string | null>;
+  onParear?: (codigoInternoSocio: string, codigoPar: string, tipoSocio: TipoProduto, tipoItem: TipoProduto) => Promise<string | null>;
   onDesparear?: () => Promise<string | null>;
 };
 
@@ -66,8 +77,15 @@ export function ModalEdicaoItem({
   );
   const [marca, setMarca] = useState(item.produto.marca ?? '');
   const [categoria, setCategoria] = useState(item.produto.categoria ?? '');
+  const [subcategoria, setSubcategoria] = useState(item.produto.subcategoria ?? '');
   const [modelo, setModelo] = useState(item.produto.modelo ?? '');
-  const [descricao, setDescricao] = useState(item.produto.descricao ?? '');
+  const [capacidad, setCapacidad] = useState(item.produto.capacidad ?? '');
+  const [tecnologia, setTecnologia] = useState(item.produto.tecnologia ?? '');
+  const [ciclo, setCiclo] = useState(item.produto.ciclo ?? '');
+  const [voltaje, setVoltaje] = useState(item.produto.voltaje ?? '');
+  const [color, setColor] = useState(item.produto.color ?? '');
+  const [peso, setPeso] = useState(item.produto.peso ?? '');
+  const [dimensiones, setDimensiones] = useState(item.produto.dimensiones ?? '');
   const [salvandoDados, setSalvandoDados] = useState(false);
   const [erroDados, setErroDados] = useState<string | null>(null);
   const [salvandoNovo, setSalvandoNovo] = useState(false);
@@ -96,7 +114,7 @@ export function ModalEdicaoItem({
   const parceirosDisponiveis = (itensConferencia ?? []).filter(
     (it) =>
       it.produto.codigoInterno !== item.produto.codigoInterno &&
-      it.produto.tipoProduto === tipoOposto &&
+      (it.produto.tipoProduto === tipoOposto || it.produto.tipoProduto === 'normal') &&
       !it.produto.codigoPar,
   );
   const parceiroAtual = parceiroCodigo
@@ -115,7 +133,7 @@ export function ModalEdicaoItem({
         : `PAR-${codigoInternoSocio}`;
     setPareando(true);
     setErroPareamento(null);
-    const erro = await onParear(codigoInternoSocio, novoCodigo);
+    const erro = await onParear(codigoInternoSocio, novoCodigo, tipoOposto, tipoLocal);
     if (erro) {
       setErroPareamento(erro);
     } else {
@@ -158,11 +176,19 @@ export function ModalEdicaoItem({
     setErroNovo(null);
     try {
       await onSalvarProdutoNovo({
+        codigoInterno: codigoInterno.trim() || undefined,
         nome: nome.trim(),
         marca: marca.trim() || undefined,
         categoria: categoria.trim() || undefined,
+        subcategoria: subcategoria.trim() || undefined,
         modelo: modelo.trim() || undefined,
-        descricao: descricao.trim() || undefined,
+        capacidad: capacidad.trim() || undefined,
+        tecnologia: tecnologia.trim() || undefined,
+        ciclo: ciclo.trim() || undefined,
+        voltaje: voltaje.trim() || undefined,
+        color: color.trim() || undefined,
+        peso: peso.trim() || undefined,
+        dimensiones: dimensiones.trim() || undefined,
         tipoProduto: tipoLocal,
         codigoPar: codigoPar.trim() || undefined,
       });
@@ -180,11 +206,19 @@ export function ModalEdicaoItem({
     setErroDados(null);
 
     const erro = await onSalvarDadosProduto({
+      codigoInterno: codigoInterno.trim() || undefined,
       nome: nome.trim(),
       marca: marca.trim() || undefined,
       categoria: categoria.trim() || undefined,
+      subcategoria: subcategoria.trim() || undefined,
       modelo: modelo.trim() || undefined,
-      descricao: descricao.trim() || undefined,
+      capacidad: capacidad.trim() || undefined,
+      tecnologia: tecnologia.trim() || undefined,
+      ciclo: ciclo.trim() || undefined,
+      voltaje: voltaje.trim() || undefined,
+      color: color.trim() || undefined,
+      peso: peso.trim() || undefined,
+      dimensiones: dimensiones.trim() || undefined,
     });
 
     if (erro) {
@@ -214,6 +248,16 @@ export function ModalEdicaoItem({
                 Preencha os dados para salvar este código como um produto novo.
               </Text>
 
+              <Text style={styles.editLabel}>CÓDIGO INTERNO</Text>
+              <TextInput
+                style={styles.editInput}
+                value={codigoInterno}
+                onChangeText={setCodigoInterno}
+                placeholder="Código interno"
+                placeholderTextColor="#98A2B3"
+                autoCapitalize="characters"
+              />
+
               <Text style={styles.editLabel}>NOME *</Text>
               <TextInput
                 style={styles.editInput}
@@ -241,23 +285,41 @@ export function ModalEdicaoItem({
                 placeholderTextColor="#98A2B3"
               />
 
-              <Text style={styles.editLabel}>MODELO</Text>
-              <TextInput
-                style={styles.editInput}
-                value={modelo}
-                onChangeText={setModelo}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
+              <Text style={styles.editLabel}>SUBCATEGORÍA</Text>
+              <TextInput style={styles.editInput} value={subcategoria} onChangeText={setSubcategoria} placeholder="Opcional" placeholderTextColor="#98A2B3" />
 
-              <Text style={styles.editLabel}>DESCRIÇÃO</Text>
-              <TextInput
-                style={styles.editInput}
-                value={descricao}
-                onChangeText={setDescricao}
-                placeholder="Opcional"
-                placeholderTextColor="#98A2B3"
-              />
+              <Text style={styles.editLabel}>MODELO</Text>
+              <TextInput style={styles.editInput} value={modelo} onChangeText={setModelo} placeholder="Opcional" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>CAPACIDAD</Text>
+              <TextInput style={styles.editInput} value={capacidad} onChangeText={setCapacidad} placeholder="Ej.: 9000 BTU" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>TECNOLOGÍA</Text>
+              <TextInput style={styles.editInput} value={tecnologia} onChangeText={setTecnologia} placeholder="Ej.: Inverter" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>CICLO</Text>
+              <TextInput style={styles.editInput} value={ciclo} onChangeText={setCiclo} placeholder="Ej.: Frío/Calor" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>VOLTAJE</Text>
+              <TextInput style={styles.editInput} value={voltaje} onChangeText={setVoltaje} placeholder="Ej.: 220V" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>COLOR</Text>
+              <TextInput style={styles.editInput} value={color} onChangeText={setColor} placeholder="Opcional" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>PESO</Text>
+              <TextInput style={styles.editInput} value={peso} onChangeText={setPeso} placeholder="Ej.: 12 kg" placeholderTextColor="#98A2B3" />
+
+              <Text style={styles.editLabel}>DIMENSIONES</Text>
+              <TextInput style={styles.editInput} value={dimensiones} onChangeText={setDimensiones} placeholder="Ej.: 80x30x20 cm" placeholderTextColor="#98A2B3" />
+
+              {item.produto.link ? (
+                <>
+                  <Text style={styles.editLabel}>LINK</Text>
+                  <Pressable onPress={() => { void Linking.openURL(item.produto.link!); }}>
+                    <Text style={styles.linkText} numberOfLines={2}>{item.produto.link}</Text>
+                  </Pressable>
+                </>
+              ) : null}
 
               <Text style={styles.editLabel}>TIPO DE PRODUTO</Text>
               <View style={styles.tipoSelector}>
@@ -322,6 +384,17 @@ export function ModalEdicaoItem({
               {/* Dados editáveis do produto */}
               {onSalvarDadosProduto && (
                 <>
+                  <Text style={styles.editLabel}>CÓDIGO INTERNO</Text>
+                  <TextInput
+                    style={styles.editInput}
+                    value={codigoInterno}
+                    onChangeText={(v) => { setCodigoInterno(v); setErroDados(null); }}
+                    placeholder="Código interno"
+                    placeholderTextColor="#98A2B3"
+                    autoCapitalize="characters"
+                    editable={!salvandoDados}
+                  />
+
                   <Text style={styles.editLabel}>NOME</Text>
                   <TextInput
                     style={styles.editInput}
@@ -343,24 +416,43 @@ export function ModalEdicaoItem({
                   />
 
                   <Text style={styles.editLabel}>CATEGORIA</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={categoria}
-                    onChangeText={setCategoria}
-                    placeholder="Opcional"
-                    placeholderTextColor="#98A2B3"
-                    editable={!salvandoDados}
-                  />
+                  <TextInput style={styles.editInput} value={categoria} onChangeText={setCategoria} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>SUBCATEGORÍA</Text>
+                  <TextInput style={styles.editInput} value={subcategoria} onChangeText={setSubcategoria} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
 
                   <Text style={styles.editLabel}>MODELO</Text>
-                  <TextInput
-                    style={styles.editInput}
-                    value={modelo}
-                    onChangeText={setModelo}
-                    placeholder="Opcional"
-                    placeholderTextColor="#98A2B3"
-                    editable={!salvandoDados}
-                  />
+                  <TextInput style={styles.editInput} value={modelo} onChangeText={setModelo} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>CAPACIDAD</Text>
+                  <TextInput style={styles.editInput} value={capacidad} onChangeText={setCapacidad} placeholder="Ej.: 9000 BTU" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>TECNOLOGÍA</Text>
+                  <TextInput style={styles.editInput} value={tecnologia} onChangeText={setTecnologia} placeholder="Ej.: Inverter" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>CICLO</Text>
+                  <TextInput style={styles.editInput} value={ciclo} onChangeText={setCiclo} placeholder="Ej.: Frío/Calor" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>VOLTAJE</Text>
+                  <TextInput style={styles.editInput} value={voltaje} onChangeText={setVoltaje} placeholder="Ej.: 220V" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>COLOR</Text>
+                  <TextInput style={styles.editInput} value={color} onChangeText={setColor} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>PESO</Text>
+                  <TextInput style={styles.editInput} value={peso} onChangeText={setPeso} placeholder="Ej.: 12 kg" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  <Text style={styles.editLabel}>DIMENSIONES</Text>
+                  <TextInput style={styles.editInput} value={dimensiones} onChangeText={setDimensiones} placeholder="Ej.: 80x30x20 cm" placeholderTextColor="#98A2B3" editable={!salvandoDados} />
+
+                  {item.produto.link ? (
+                    <>
+                      <Text style={styles.editLabel}>LINK</Text>
+                      <Pressable onPress={() => { void Linking.openURL(item.produto.link!); }}>
+                        <Text style={styles.linkText} numberOfLines={2}>{item.produto.link}</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
 
                   {erroDados ? (
                     <Text style={styles.erroText}>{erroDados}</Text>
@@ -452,18 +544,27 @@ export function ModalEdicaoItem({
                           onPress={() => { void handleParear(p.produto.codigoInterno); }}
                           disabled={pareando}
                         >
-                          <Text style={styles.parceiroOpcaoNome} numberOfLines={1}>
-                            {p.produto.nome}
-                          </Text>
+                          <View style={styles.parceiroOpcaoRow}>
+                            <Text style={styles.parceiroOpcaoNome} numberOfLines={1}>
+                              {p.produto.nome}
+                            </Text>
+                            {p.produto.tipoProduto === 'normal' && (
+                              <View style={styles.parceiroTipoBadge}>
+                                <Text style={styles.parceiroTipoBadgeText}>
+                                  → {tipoOposto === 'evaporadora' ? 'Evaporadora' : 'Condensadora'}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                           <Text style={styles.parceiroOpcaoCodigo}>
-                            {p.produto.codigoInterno}
+                            {formatarCodigoInterno(p.produto.codigoInterno)}
                           </Text>
                         </Pressable>
                       ))}
                     </View>
                   ) : (
                     <Text style={styles.parceiroVazio}>
-                      Nenhuma {tipoOposto} sem par na conferência
+                      Nenhum produto disponível para parear na conferência
                     </Text>
                   )}
 
@@ -483,6 +584,8 @@ export function ModalEdicaoItem({
             value={quantidadeTexto}
             onChangeText={setQuantidadeTexto}
             keyboardType="number-pad"
+            autoFocus
+            selectTextOnFocus
           />
 
           <Pressable
@@ -589,6 +692,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#D92D20',
     textAlign: 'center',
+  },
+
+  linkText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#208AEF',
+    textDecorationLine: 'underline',
   },
 
   editSaveButtonCond: {
@@ -745,16 +855,37 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
   },
 
+  parceiroOpcaoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+
   parceiroOpcaoNome: {
     fontSize: 13,
     fontWeight: '700',
     color: '#18212F',
+    flexShrink: 1,
   },
 
   parceiroOpcaoCodigo: {
     fontSize: 10,
     color: '#667085',
     marginTop: 2,
+  },
+
+  parceiroTipoBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#EFF8FF',
+  },
+
+  parceiroTipoBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#175CD3',
   },
 
   parceiroVazio: {

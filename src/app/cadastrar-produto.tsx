@@ -4,10 +4,13 @@
 // Modo editar: recebe ?codigoInterno=XXX → pré-carrega campos.
 // ============================================================
 
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -36,6 +39,9 @@ export default function CadastrarProdutoScreen() {
 
   const modoEdicao = !!codigoParam;
 
+  const [permission, requestPermission] = useCameraPermissions();
+  const [mostrarCamera, setMostrarCamera] = useState(false);
+
   // ----------------------------------------------------------
   // CAMPOS
   // ----------------------------------------------------------
@@ -45,8 +51,16 @@ export default function CadastrarProdutoScreen() {
   const [nome, setNome] = useState('');
   const [marca, setMarca] = useState('');
   const [categoria, setCategoria] = useState('');
+  const [subcategoria, setSubcategoria] = useState('');
   const [modelo, setModelo] = useState('');
-  const [descricao, setDescricao] = useState('');
+  const [capacidad, setCapacidad] = useState('');
+  const [tecnologia, setTecnologia] = useState('');
+  const [ciclo, setCiclo] = useState('');
+  const [voltaje, setVoltaje] = useState('');
+  const [color, setColor] = useState('');
+  const [peso, setPeso] = useState('');
+  const [dimensiones, setDimensiones] = useState('');
+  const [link, setLink] = useState('');
   const [tipoProduto, setTipoProduto] = useState<TipoProduto>('normal');
   const [codigoPar, setCodigoPar] = useState('');
 
@@ -84,14 +98,39 @@ export default function CadastrarProdutoScreen() {
         setNome(produto.nome);
         setMarca(produto.marca ?? '');
         setCategoria(produto.categoria ?? '');
+        setSubcategoria(produto.subcategoria ?? '');
         setModelo(produto.modelo ?? '');
-        setDescricao(produto.descricao ?? '');
+        setCapacidad(produto.capacidad ?? '');
+        setTecnologia(produto.tecnologia ?? '');
+        setCiclo(produto.ciclo ?? '');
+        setVoltaje(produto.voltaje ?? '');
+        setColor(produto.color ?? '');
+        setPeso(produto.peso ?? '');
+        setDimensiones(produto.dimensiones ?? '');
+        setLink(produto.link ?? '');
         setTipoProduto(produto.tipoProduto ?? 'normal');
         setCodigoPar(produto.codigoPar ?? '');
       })
       .catch(() => setErro('Erro ao carregar produto.'))
       .finally(() => setCarregando(false));
   }, [codigoParam]);
+
+  // ----------------------------------------------------------
+  // CÂMERA — escanear código de barras
+  // ----------------------------------------------------------
+
+  async function abrirCamera() {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) return;
+    }
+    setMostrarCamera(true);
+  }
+
+  function handleBarcodeScan({ data }: { data: string }) {
+    setCodigoBarras(data);
+    setMostrarCamera(false);
+  }
 
   // ----------------------------------------------------------
   // SALVAR
@@ -105,6 +144,7 @@ export default function CadastrarProdutoScreen() {
 
     try {
       const parTrimmed = codigoPar.trim() || undefined;
+      const esAC = tipoProduto === 'evaporadora' || tipoProduto === 'condensadora';
 
       if (modoEdicao && produtoOriginal) {
         const produtoAtualizado: Produto = {
@@ -113,10 +153,17 @@ export default function CadastrarProdutoScreen() {
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
+          subcategoria: subcategoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
-          descricao: descricao.trim() || undefined,
+          capacidad: capacidad.trim() || undefined,
+          tecnologia: tecnologia.trim() || undefined,
+          ciclo: ciclo.trim() || undefined,
+          voltaje: voltaje.trim() || undefined,
+          color: color.trim() || undefined,
+          peso: peso.trim() || undefined,
+          dimensiones: dimensiones.trim() || undefined,
           tipoProduto,
-          codigoPar: (tipoProduto === 'evaporadora' || tipoProduto === 'condensadora') ? parTrimmed : undefined,
+          codigoPar: esAC ? parTrimmed : undefined,
         };
 
         await atualizarProduto(produtoAtualizado, codigoParam!);
@@ -127,10 +174,17 @@ export default function CadastrarProdutoScreen() {
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
+          subcategoria: subcategoria.trim() || undefined,
           modelo: modelo.trim() || undefined,
-          descricao: descricao.trim() || undefined,
+          capacidad: capacidad.trim() || undefined,
+          tecnologia: tecnologia.trim() || undefined,
+          ciclo: ciclo.trim() || undefined,
+          voltaje: voltaje.trim() || undefined,
+          color: color.trim() || undefined,
+          peso: peso.trim() || undefined,
+          dimensiones: dimensiones.trim() || undefined,
           tipoProduto,
-          codigoPar: (tipoProduto === 'evaporadora' || tipoProduto === 'condensadora') ? parTrimmed : undefined,
+          codigoPar: esAC ? parTrimmed : undefined,
         });
       }
 
@@ -208,7 +262,6 @@ export default function CadastrarProdutoScreen() {
             ) : null}
             <Text style={styles.confirmAviso}>
               O produto será desativado e não aparecerá mais nas conferências.
-              Esta ação pode ser revertida pelo administrador.
             </Text>
 
             {erro ? <Text style={styles.errorText}>{erro}</Text> : null}
@@ -273,21 +326,32 @@ export default function CadastrarProdutoScreen() {
             </View>
           )}
 
-          {/* CÓDIGO DE BARRAS — imutável após criação */}
+          {/* CÓDIGO DE BARRAS */}
           <Text style={styles.label}>
             CÓDIGO DE BARRAS{modoEdicao ? ' (não pode ser alterado)' : ''}
           </Text>
-          <TextInput
-            style={[styles.input, modoEdicao && styles.inputReadonly]}
-            value={codigoBarras}
-            onChangeText={modoEdicao ? undefined : setCodigoBarras}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            keyboardType="number-pad"
-            editable={!modoEdicao && !salvando && !sucesso}
-          />
+          <View style={styles.barcodeRow}>
+            <TextInput
+              style={[styles.input, styles.barcodeInput, modoEdicao && styles.inputReadonly]}
+              value={codigoBarras}
+              onChangeText={modoEdicao ? undefined : setCodigoBarras}
+              placeholder="Opcional"
+              placeholderTextColor="#98A2B3"
+              keyboardType="number-pad"
+              editable={!modoEdicao && !salvando && !sucesso}
+            />
+            {!modoEdicao && (
+              <Pressable
+                style={[styles.cameraButton, (salvando || sucesso) && styles.cameraButtonDisabled]}
+                onPress={() => { void abrirCamera(); }}
+                disabled={salvando || sucesso}
+              >
+                <Text style={styles.cameraIcon}>📷</Text>
+              </Pressable>
+            )}
+          </View>
 
-          {/* CÓDIGO INTERNO — editável em qualquer modo */}
+          {/* CÓDIGO INTERNO */}
           <Text style={styles.label}>
             CÓDIGO INTERNO{modoEdicao ? '' : ' (opcional — gerado automaticamente)'}
           </Text>
@@ -345,18 +409,103 @@ export default function CadastrarProdutoScreen() {
             editable={!salvando && !sucesso}
           />
 
-          {/* DESCRIÇÃO */}
-          <Text style={styles.label}>DESCRIÇÃO</Text>
+          {/* SUBCATEGORÍA */}
+          <Text style={styles.label}>SUBCATEGORÍA</Text>
           <TextInput
-            style={[styles.input, styles.inputMultiline]}
-            value={descricao}
-            onChangeText={setDescricao}
+            style={styles.input}
+            value={subcategoria}
+            onChangeText={setSubcategoria}
             placeholder="Opcional"
             placeholderTextColor="#98A2B3"
-            multiline
-            numberOfLines={3}
             editable={!salvando && !sucesso}
           />
+
+          {/* CAPACIDAD */}
+          <Text style={styles.label}>CAPACIDAD</Text>
+          <TextInput
+            style={styles.input}
+            value={capacidad}
+            onChangeText={setCapacidad}
+            placeholder="Ej.: 9000 BTU"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* TECNOLOGÍA */}
+          <Text style={styles.label}>TECNOLOGÍA</Text>
+          <TextInput
+            style={styles.input}
+            value={tecnologia}
+            onChangeText={setTecnologia}
+            placeholder="Ej.: Inverter"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* CICLO */}
+          <Text style={styles.label}>CICLO</Text>
+          <TextInput
+            style={styles.input}
+            value={ciclo}
+            onChangeText={setCiclo}
+            placeholder="Ej.: Frío/Calor"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* VOLTAJE */}
+          <Text style={styles.label}>VOLTAJE</Text>
+          <TextInput
+            style={styles.input}
+            value={voltaje}
+            onChangeText={setVoltaje}
+            placeholder="Ej.: 220V"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* COLOR */}
+          <Text style={styles.label}>COLOR</Text>
+          <TextInput
+            style={styles.input}
+            value={color}
+            onChangeText={setColor}
+            placeholder="Opcional"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* PESO */}
+          <Text style={styles.label}>PESO</Text>
+          <TextInput
+            style={styles.input}
+            value={peso}
+            onChangeText={setPeso}
+            placeholder="Ej.: 12 kg"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* DIMENSIONES */}
+          <Text style={styles.label}>DIMENSIONES</Text>
+          <TextInput
+            style={styles.input}
+            value={dimensiones}
+            onChangeText={setDimensiones}
+            placeholder="Ej.: 80x30x20 cm"
+            placeholderTextColor="#98A2B3"
+            editable={!salvando && !sucesso}
+          />
+
+          {/* LINK — só exibe, não editável */}
+          {link ? (
+            <>
+              <Text style={styles.label}>LINK</Text>
+              <Pressable onPress={() => { void Linking.openURL(link); }}>
+                <Text style={styles.linkText} numberOfLines={2}>{link}</Text>
+              </Pressable>
+            </>
+          ) : null}
 
           {/* TIPO DE PRODUTO */}
           <Text style={styles.label}>TIPO DE PRODUTO</Text>
@@ -418,7 +567,7 @@ export default function CadastrarProdutoScreen() {
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text style={styles.saveButtonText}>
-                {modoEdicao ? 'SALVAR ALTERAÇÕES' : 'CADASTRAR PRODUTO'}
+                {modoEdicao ? 'GUARDAR CAMBIOS' : 'SALVAR PRODUTO'}
               </Text>
             )}
           </Pressable>
@@ -435,6 +584,31 @@ export default function CadastrarProdutoScreen() {
           )}
         </ScrollView>
       </View>
+
+      {/* CÂMERA MODAL */}
+      <Modal
+        visible={mostrarCamera}
+        animationType="slide"
+        onRequestClose={() => setMostrarCamera(false)}
+      >
+        <View style={styles.cameraContainer}>
+          <CameraView
+            style={styles.camera}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'code128', 'code39', 'qr', 'upc_a', 'upc_e'] }}
+            onBarcodeScanned={handleBarcodeScan}
+          />
+          <View style={styles.cameraOverlay}>
+            <View style={styles.cameraMira} />
+          </View>
+          <Pressable
+            style={styles.cameraCloseButton}
+            onPress={() => setMostrarCamera(false)}
+          >
+            <Text style={styles.cameraCloseText}>✕  CANCELAR</Text>
+          </Pressable>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -543,10 +717,41 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
-  inputMultiline: {
-    height: 80,
-    paddingTop: 12,
-    textAlignVertical: 'top',
+  barcodeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+
+  barcodeInput: {
+    flex: 1,
+    marginTop: 0,
+  },
+
+  cameraButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E1E5EA',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  cameraButtonDisabled: {
+    opacity: 0.4,
+  },
+
+  cameraIcon: {
+    fontSize: 22,
+  },
+
+  linkText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#208AEF',
+    textDecorationLine: 'underline',
   },
 
   errorText: {
@@ -686,6 +891,46 @@ const styles = StyleSheet.create({
   },
 
   tipoOpcaoTextoAtivo: {
+    color: '#FFFFFF',
+  },
+
+  // Câmera
+  cameraContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+
+  camera: {
+    flex: 1,
+  },
+
+  cameraOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  cameraMira: {
+    width: 240,
+    height: 160,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#208AEF',
+  },
+
+  cameraCloseButton: {
+    position: 'absolute',
+    bottom: 50,
+    alignSelf: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 30,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+
+  cameraCloseText: {
+    fontSize: 16,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
 });

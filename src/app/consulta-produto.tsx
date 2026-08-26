@@ -12,65 +12,64 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  obterProdutos,
-  removerProduto,
-} from '@/database/database';
+import { formatarCodigoInterno, obterProdutos } from '@/database/database';
 import type { Produto } from '@/models/produto';
 
 export default function ConsultaProdutoScreen() {
   const [todos, setTodos] = useState<Produto[]>([]);
   const [termo, setTermo] = useState('');
+  const [termoCat, setTermoCat] = useState('');
+  const [categoriaAtiva, setCategoriaAtiva] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
-  const [produtoSelecionado, setProdutoSelecionado] =
-    useState<Produto | null>(null);
 
-  // Recarrega sempre que a tela entra em foco (ex: ao voltar da edição).
   useFocusEffect(
     useCallback(() => {
       let ativo = true;
 
       setCarregando(true);
       obterProdutos()
-        .then((lista) => {
-          if (ativo) setTodos(lista);
-        })
-        .catch((error) => {
-          console.error('Erro ao carregar produtos:', error);
-        })
-        .finally(() => {
-          if (ativo) setCarregando(false);
-        });
+        .then((lista) => { if (ativo) setTodos(lista); })
+        .catch((e) => { console.error('Erro ao carregar produtos:', e); })
+        .finally(() => { if (ativo) setCarregando(false); });
 
-      return () => {
-        ativo = false;
-      };
+      return () => { ativo = false; };
     }, []),
   );
 
-  // Filtra client-side sem delay — lista já está em memória.
+  // Contagem por categoria (ignorando filtro de texto para que os números sejam estáveis)
+  const contagemPorCategoria = useMemo(() => {
+    const mapa: Record<string, number> = {};
+    for (const p of todos) {
+      if (p.categoria) {
+        mapa[p.categoria] = (mapa[p.categoria] ?? 0) + 1;
+      }
+    }
+    return mapa;
+  }, [todos]);
+
+  // Categorias ordenadas por quantidade (maior primeiro), filtradas pelo termoCat
+  const categorias = useMemo(() => {
+    const tc = termoCat.trim().toLowerCase();
+    return Object.keys(contagemPorCategoria)
+      .filter((c) => !tc || c.toLowerCase().includes(tc))
+      .sort((a, b) => (contagemPorCategoria[b] ?? 0) - (contagemPorCategoria[a] ?? 0));
+  }, [contagemPorCategoria, termoCat]);
+
   const resultados = useMemo(() => {
     const t = termo.trim().toLowerCase();
-
-    if (!t) {
-      return todos;
-    }
-
-    return todos.filter(
-      (p) =>
+    return todos.filter((p) => {
+      if (categoriaAtiva && p.categoria !== categoriaAtiva) return false;
+      if (!t) return true;
+      return (
         p.nome.toLowerCase().includes(t) ||
         p.codigoInterno.toLowerCase().includes(t) ||
         (p.codigoBarras && p.codigoBarras.includes(t)) ||
-        (p.marca && p.marca.toLowerCase().includes(t)),
-    );
-  }, [termo, todos]);
+        (p.marca && p.marca.toLowerCase().includes(t))
+      );
+    });
+  }, [termo, categoriaAtiva, todos]);
 
-  function handleProdutoRemovido(codigoInterno: string) {
-    setTodos((lista) =>
-      lista.filter((item) => item.codigoInterno !== codigoInterno),
-    );
-    setProdutoSelecionado(null);
-  }
+  const hayFiltro = !!categoriaAtiva || termo.trim().length > 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -81,40 +80,111 @@ export default function ConsultaProdutoScreen() {
           <Pressable style={styles.backButton} onPress={() => router.back()}>
             <Text style={styles.backIcon}>‹</Text>
           </Pressable>
-
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>PRODUTOS</Text>
+            <Text style={styles.headerTitle}>PROCURAR PRODUTOS</Text>
             {!carregando && (
               <Text style={styles.headerCount}>
-                {resultados.length === todos.length
-                  ? `${todos.length} produto(s)`
-                  : `${resultados.length} de ${todos.length}`}
+                {hayFiltro
+                  ? `${resultados.length} de ${todos.length} produto(s)`
+                  : `${todos.length} produto(s)`}
               </Text>
             )}
           </View>
-
           <View style={styles.headerSpace} />
         </View>
 
         {/* Buscador */}
         <View style={styles.searchBox}>
           <Text style={styles.searchIcon}>🔎</Text>
-
           <TextInput
             style={styles.searchInput}
-            placeholder="Nome, código interno, código de barras ou marca"
+            placeholder="Nome, código, marca..."
             placeholderTextColor="#98A2B3"
             value={termo}
             onChangeText={setTermo}
             autoCapitalize="none"
           />
-
           {termo.length > 0 && (
             <Pressable onPress={() => setTermo('')} style={styles.clearButton}>
               <Text style={styles.clearIcon}>✕</Text>
             </Pressable>
           )}
         </View>
+
+        {/* Filtros de categoría */}
+        {!carregando && Object.keys(contagemPorCategoria).length > 0 && (
+          <View style={styles.filtrosWrapper}>
+            {/* Buscador de categoría */}
+            <View style={styles.catSearchBox}>
+              <Text style={styles.catSearchIcon}>🔍</Text>
+              <TextInput
+                style={styles.catSearchInput}
+                placeholder="Buscar categoría..."
+                placeholderTextColor="#98A2B3"
+                value={termoCat}
+                onChangeText={setTermoCat}
+                autoCapitalize="none"
+              />
+              {termoCat.length > 0 && (
+                <Pressable onPress={() => setTermoCat('')} style={styles.clearButton}>
+                  <Text style={styles.clearIcon}>✕</Text>
+                </Pressable>
+              )}
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filtrosScroll}
+              contentContainerStyle={styles.filtrosContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Pill "Todas" */}
+              <Pressable
+                style={[styles.pill, categoriaAtiva === null && styles.pillAtiva]}
+                onPress={() => setCategoriaAtiva(null)}
+              >
+                <Text style={[styles.pillLabel, categoriaAtiva === null && styles.pillLabelAtiva]}>
+                  Todas
+                </Text>
+                <View style={[styles.pillBadge, categoriaAtiva === null && styles.pillBadgeAtiva]}>
+                  <Text style={[styles.pillBadgeText, categoriaAtiva === null && styles.pillBadgeTextAtiva]}>
+                    {todos.length}
+                  </Text>
+                </View>
+              </Pressable>
+
+              {categorias.map((cat) => {
+                const ativa = categoriaAtiva === cat;
+                return (
+                  <Pressable
+                    key={cat}
+                    style={[styles.pill, ativa && styles.pillAtiva]}
+                    onPress={() => setCategoriaAtiva(ativa ? null : cat)}
+                  >
+                    <Text style={[styles.pillLabel, ativa && styles.pillLabelAtiva]} numberOfLines={1}>
+                      {cat}
+                    </Text>
+                    <View style={[styles.pillBadge, ativa && styles.pillBadgeAtiva]}>
+                      <Text style={[styles.pillBadgeText, ativa && styles.pillBadgeTextAtiva]}>
+                        {contagemPorCategoria[cat] ?? 0}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Banner de filtro activo */}
+            {categoriaAtiva && (
+              <Pressable style={styles.filtroAtivoBanner} onPress={() => setCategoriaAtiva(null)}>
+                <Text style={styles.filtroAtivoTexto}>
+                  Filtrando: <Text style={styles.filtroAtivoNome}>{categoriaAtiva}</Text>
+                </Text>
+                <Text style={styles.filtroAtivoFechar}>✕ limpar</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
 
         {/* Lista */}
         {carregando ? (
@@ -126,10 +196,18 @@ export default function ConsultaProdutoScreen() {
           <View style={styles.centerContainer}>
             <Text style={styles.emptyIcon}>📦</Text>
             <Text style={styles.emptyText}>
-              {termo.trim()
-                ? `Nenhum produto encontrado para "${termo.trim()}".`
+              {hayFiltro
+                ? 'Nenhum produto encontrado para esse filtro.'
                 : 'Nenhum produto cadastrado.'}
             </Text>
+            {hayFiltro && (
+              <Pressable
+                style={styles.limparFiltroBtn}
+                onPress={() => { setTermo(''); setCategoriaAtiva(null); }}
+              >
+                <Text style={styles.limparFiltroBtnText}>LIMPAR FILTROS</Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <FlatList
@@ -141,39 +219,32 @@ export default function ConsultaProdutoScreen() {
             renderItem={({ item }) => (
               <Pressable
                 style={styles.card}
-                onPress={() => setProdutoSelecionado(item)}
+                onPress={() =>
+                  router.push(`/cadastrar-produto?codigoInterno=${encodeURIComponent(item.codigoInterno)}`)
+                }
               >
                 <View style={styles.cardHeader}>
-                  <Text style={styles.cardCode}>{item.codigoInterno}</Text>
-
-                  <View
-                    style={[
-                      styles.origemBadge,
-                      item.origem === 'manual' && styles.origemManual,
-                      item.origem === 'desconhecido' && styles.origemDesconhecido,
-                    ]}
-                  >
+                  <Text style={styles.cardCode}>{formatarCodigoInterno(item.codigoInterno)}</Text>
+                  <View style={[
+                    styles.origemBadge,
+                    item.origem === 'manual' && styles.origemManual,
+                    item.origem === 'desconhecido' && styles.origemDesconhecido,
+                  ]}>
                     <Text style={styles.origemBadgeText}>
-                      {item.origem === 'catalogo'
-                        ? 'CATÁLOGO'
-                        : item.origem === 'manual'
-                        ? 'MANUAL'
-                        : 'NÃO IDENT.'}
+                      {item.origem === 'catalogo' ? 'CATÁLOGO' : item.origem === 'manual' ? 'MANUAL' : 'NÃO IDENT.'}
                     </Text>
                   </View>
                 </View>
 
-                <Text style={styles.cardName} numberOfLines={2}>
-                  {item.nome}
-                </Text>
+                <Text style={styles.cardName} numberOfLines={2}>{item.nome}</Text>
+
+                {item.especificacoes_resumo ? (
+                  <Text style={styles.cardEspec} numberOfLines={1}>{item.especificacoes_resumo}</Text>
+                ) : null}
 
                 <View style={styles.cardMeta}>
-                  {item.marca && (
-                    <Text style={styles.cardBrand}>{item.marca}</Text>
-                  )}
-                  {item.categoria && (
-                    <Text style={styles.cardCategory}>{item.categoria}</Text>
-                  )}
+                  {item.marca && <Text style={styles.cardBrand}>{item.marca}</Text>}
+                  {item.categoria && <Text style={styles.cardCategory}>{item.categoria}</Text>}
                 </View>
 
                 <Text style={styles.cardBarcode}>
@@ -184,199 +255,13 @@ export default function ConsultaProdutoScreen() {
           />
         )}
       </View>
-
-      {produtoSelecionado && (
-        <DetalheProdutoModal
-          produto={produtoSelecionado}
-          onFechar={() => setProdutoSelecionado(null)}
-          onProdutoRemovido={handleProdutoRemovido}
-        />
-      )}
     </SafeAreaView>
   );
 }
 
-// ============================================================
-// MODAL DE DETALHE / EDIÇÃO / EXCLUSÃO
-// ============================================================
-
-type DetalheProdutoModalProps = {
-  produto: Produto;
-  onFechar: () => void;
-  onProdutoRemovido: (codigoInterno: string) => void;
-};
-
-function DetalheProdutoModal({
-  produto,
-  onFechar,
-  onProdutoRemovido,
-}: DetalheProdutoModalProps) {
-  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
-  const [excluindo, setExcluindo] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-
-
-  async function confirmarExclusao() {
-    if (excluindo) return;
-
-    setExcluindo(true);
-
-    try {
-      await removerProduto(produto.codigoInterno);
-      onProdutoRemovido(produto.codigoInterno);
-    } catch {
-      setErro('Não foi possível remover o produto.');
-      setConfirmandoExclusao(false);
-    } finally {
-      setExcluindo(false);
-    }
-  }
-
-  return (
-    <View style={styles.overlay}>
-      <View style={styles.detailCard}>
-        <View style={styles.detailHeader}>
-          <Text style={styles.detailHeaderTitle} numberOfLines={1}>
-            {confirmandoExclusao ? 'EXCLUIR PRODUTO' : 'DETALHES DO PRODUTO'}
-          </Text>
-
-          <Pressable onPress={onFechar} style={styles.detailCloseButton}>
-            <Text style={styles.detailCloseIcon}>✕</Text>
-          </Pressable>
-        </View>
-
-        {confirmandoExclusao ? (
-          <View style={styles.confirmExclusao}>
-            <Text style={styles.confirmExclusaoIcon}>⚠️</Text>
-            <Text style={styles.confirmExclusaoTitulo}>
-              Excluir este produto?
-            </Text>
-            <Text style={styles.confirmExclusaoNome}>{produto.nome}</Text>
-            <Text style={styles.confirmExclusaoAviso}>
-              O produto será desativado. Leituras em conferências existentes
-              não serão afetadas.
-            </Text>
-
-            {erro ? <Text style={styles.errorBoxText}>{erro}</Text> : null}
-
-            <Pressable
-              style={[styles.dangerButton, excluindo && styles.buttonDisabled]}
-              onPress={() => void confirmarExclusao()}
-              disabled={excluindo}
-            >
-              {excluindo ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.dangerButtonText}>SIM, EXCLUIR</Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              style={styles.cancelEditButton}
-              onPress={() => setConfirmandoExclusao(false)}
-              disabled={excluindo}
-            >
-              <Text style={styles.cancelEditButtonText}>CANCELAR</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={styles.detailName}>{produto.nome}</Text>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Código interno</Text>
-              <Text style={styles.detailValue}>{produto.codigoInterno}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Código de barras</Text>
-              <Text selectable style={styles.detailValue}>
-                {produto.codigoBarras || 'não informado'}
-              </Text>
-            </View>
-
-            {produto.marca && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Marca</Text>
-                <Text style={styles.detailValue}>{produto.marca}</Text>
-              </View>
-            )}
-
-            {produto.categoria && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Categoria</Text>
-                <Text style={styles.detailValue}>{produto.categoria}</Text>
-              </View>
-            )}
-
-            {produto.modelo && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Modelo</Text>
-                <Text style={styles.detailValue}>{produto.modelo}</Text>
-              </View>
-            )}
-
-            {produto.descricao && (
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Descrição</Text>
-                <Text style={styles.detailValue}>{produto.descricao}</Text>
-              </View>
-            )}
-
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Origem</Text>
-              <Text style={styles.detailValue}>
-                {produto.origem === 'catalogo'
-                  ? 'Catálogo RAMSONS'
-                  : produto.origem === 'manual'
-                  ? 'Cadastrado manualmente'
-                  : 'Não identificado'}
-              </Text>
-            </View>
-
-            {/* Editar — navega ao formulário completo */}
-            <Pressable
-              style={styles.editButton}
-              onPress={() => {
-                onFechar();
-                router.push(
-                  `/cadastrar-produto?codigoInterno=${encodeURIComponent(produto.codigoInterno)}`,
-                );
-              }}
-            >
-              <Text style={styles.editButtonText}>✏️  EDITAR PRODUTO</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.deleteButton}
-              onPress={() => {
-                setErro(null);
-                setConfirmandoExclusao(true);
-              }}
-            >
-              <Text style={styles.deleteButtonText}>🗑️  EXCLUIR PRODUTO</Text>
-            </Pressable>
-          </ScrollView>
-        )}
-      </View>
-    </View>
-  );
-}
-
-// ============================================================
-// ESTILOS
-// ============================================================
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F7FA',
-  },
-
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
+  container: { flex: 1, backgroundColor: '#F5F7FA' },
+  content: { flex: 1, paddingHorizontal: 20 },
 
   header: {
     height: 58,
@@ -384,44 +269,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-
-  backButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  backIcon: {
-    fontSize: 38,
-    lineHeight: 42,
-    color: '#18212F',
-  },
-
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-  },
-
-  headerTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#18212F',
-  },
-
-  headerCount: {
-    marginTop: 1,
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  headerSpace: {
-    width: 44,
-  },
+  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backIcon: { fontSize: 38, lineHeight: 42, color: '#18212F' },
+  headerCenter: { flex: 1, alignItems: 'center' },
+  headerTitle: { fontSize: 15, fontWeight: '800', color: '#18212F' },
+  headerCount: { marginTop: 1, fontSize: 11, color: '#667085' },
+  headerSpace: { width: 44 },
 
   searchBox: {
     height: 50,
-    marginBottom: 8,
+    marginBottom: 10,
     paddingHorizontal: 14,
     borderRadius: 13,
     backgroundColor: '#FFFFFF',
@@ -431,308 +288,121 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-
-  searchIcon: {
-    fontSize: 16,
-  },
-
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: '#18212F',
-  },
-
+  searchIcon: { fontSize: 16 },
+  searchInput: { flex: 1, fontSize: 14, color: '#18212F' },
   clearButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#F2F4F7',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: '#F2F4F7', alignItems: 'center', justifyContent: 'center',
   },
+  clearIcon: { fontSize: 11, color: '#667085' },
 
-  clearIcon: {
-    fontSize: 11,
-    color: '#667085',
-  },
+  filtrosWrapper: { marginBottom: 8, gap: 6 },
 
-  centerContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 30,
-  },
-
-  loadingText: {
-    marginTop: 12,
-    fontSize: 13,
-    color: '#667085',
-  },
-
-  emptyIcon: {
-    fontSize: 36,
-    marginBottom: 10,
-  },
-
-  emptyText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#667085',
-    textAlign: 'center',
-  },
-
-  list: {
-    paddingTop: 4,
-    paddingBottom: 20,
-    gap: 8,
-  },
-
-  card: {
-    padding: 14,
-    borderRadius: 14,
+  catSearchBox: {
+    height: 38,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E4E7EC',
-  },
-
-  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
+    gap: 6,
   },
+  catSearchIcon: { fontSize: 13 },
+  catSearchInput: { flex: 1, fontSize: 13, color: '#18212F' },
 
-  cardCode: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#208AEF',
-  },
+  filtrosScroll: { flexGrow: 0 },
 
-  origemBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: '#EAF4FF',
-  },
-
-  origemManual: {
-    backgroundColor: '#FFFBEA',
-  },
-
-  origemDesconhecido: {
-    backgroundColor: '#FFF1F0',
-  },
-
-  origemBadgeText: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#667085',
-  },
-
-  cardName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#18212F',
-  },
-
-  cardMeta: {
-    marginTop: 4,
+  filtrosContent: {
     flexDirection: 'row',
-    gap: 8,
-  },
-
-  cardBrand: {
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  cardCategory: {
-    fontSize: 11,
-    color: '#98A2B3',
-  },
-
-  cardBarcode: {
-    marginTop: 3,
-    fontSize: 11,
-    color: '#98A2B3',
-  },
-
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
+    gap: 6,
+    paddingBottom: 8,
+    paddingRight: 4,
   },
 
-  detailCard: {
-    width: '100%',
-    maxWidth: 420,
-    maxHeight: '90%',
-    padding: 20,
-    borderRadius: 20,
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 18,
     backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D0D5DD',
   },
+  pillAtiva: { backgroundColor: '#208AEF', borderColor: '#208AEF' },
 
-  detailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
+  pillLabel: { fontSize: 13, fontWeight: '700', color: '#344054', maxWidth: 140 },
+  pillLabelAtiva: { color: '#FFFFFF' },
 
-  detailHeaderTitle: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#667085',
-    letterSpacing: 0.6,
-  },
-
-  detailCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  pillBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#F2F4F7',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 5,
   },
+  pillBadgeAtiva: { backgroundColor: 'rgba(255,255,255,0.25)' },
 
-  detailCloseIcon: {
-    fontSize: 14,
-    color: '#475467',
-  },
+  pillBadgeText: { fontSize: 11, fontWeight: '800', color: '#667085' },
+  pillBadgeTextAtiva: { color: '#FFFFFF' },
 
-  detailName: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#18212F',
-    marginBottom: 14,
-  },
-
-  detailRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2F4F7',
-  },
-
-  detailLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#98A2B3',
-    letterSpacing: 0.5,
-  },
-
-  detailValue: {
+  filtroAtivoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#EAF4FF',
+    borderWidth: 1,
+    borderColor: '#B2D6FB',
     marginTop: 2,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#18212F',
   },
+  filtroAtivoTexto: { fontSize: 12, color: '#175CD3' },
+  filtroAtivoNome: { fontWeight: '800' },
+  filtroAtivoFechar: { fontSize: 12, fontWeight: '700', color: '#175CD3' },
 
-  editButton: {
-    height: 48,
-    marginTop: 18,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#208AEF',
-    alignItems: 'center',
-    justifyContent: 'center',
+  centerContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30,
   },
+  loadingText: { marginTop: 12, fontSize: 13, color: '#667085' },
+  emptyIcon: { fontSize: 36, marginBottom: 10 },
+  emptyText: { fontSize: 13, lineHeight: 19, color: '#667085', textAlign: 'center' },
 
-  editButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#208AEF',
+  limparFiltroBtn: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#208AEF',
   },
+  limparFiltroBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
 
-  deleteButton: {
-    height: 48,
-    marginTop: 10,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#F04438',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  list: { paddingTop: 4, paddingBottom: 20, gap: 8 },
 
-  deleteButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#F04438',
+  card: {
+    padding: 14, borderRadius: 14,
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E4E7EC',
   },
-
-  // Confirmação de exclusão
-  confirmExclusao: {
-    alignItems: 'center',
-    paddingVertical: 8,
+  cardHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: 4,
   },
-
-  confirmExclusaoIcon: {
-    fontSize: 36,
-    marginBottom: 10,
-  },
-
-  confirmExclusaoTitulo: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#18212F',
-    textAlign: 'center',
-  },
-
-  confirmExclusaoNome: {
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#667085',
-    textAlign: 'center',
-  },
-
-  confirmExclusaoAviso: {
-    marginTop: 12,
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#98A2B3',
-    textAlign: 'center',
-  },
-
-  dangerButton: {
-    width: '100%',
-    height: 50,
-    marginTop: 20,
-    borderRadius: 13,
-    backgroundColor: '#F04438',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  dangerButtonText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-
-  errorBoxText: {
-    marginTop: 10,
-    fontSize: 12,
-    color: '#B42318',
-    textAlign: 'center',
-  },
-
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-
-  cancelEditButton: {
-    height: 44,
-    marginTop: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  cancelEditButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#667085',
-  },
+  cardCode: { fontSize: 12, fontWeight: '800', color: '#208AEF' },
+  origemBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: '#EAF4FF' },
+  origemManual: { backgroundColor: '#FFFBEA' },
+  origemDesconhecido: { backgroundColor: '#FFF1F0' },
+  origemBadgeText: { fontSize: 8, fontWeight: '900', color: '#667085' },
+  cardName: { fontSize: 14, fontWeight: '700', color: '#18212F' },
+  cardEspec: { marginTop: 2, fontSize: 11, color: '#667085', fontStyle: 'italic' },
+  cardMeta: { marginTop: 4, flexDirection: 'row', gap: 8 },
+  cardBrand: { fontSize: 11, color: '#667085' },
+  cardCategory: { fontSize: 11, color: '#98A2B3' },
+  cardBarcode: { marginTop: 3, fontSize: 11, color: '#98A2B3' },
 });

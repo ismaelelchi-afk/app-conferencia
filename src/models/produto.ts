@@ -13,8 +13,17 @@ export type Produto = {
   nome: string;
   marca?: string;
   categoria?: string;
+  subcategoria?: string;
   modelo?: string;
-  descricao?: string;
+  capacidad?: string;
+  tecnologia?: string;
+  ciclo?: string;
+  voltaje?: string;
+  color?: string;
+  peso?: string;
+  dimensiones?: string;
+  especificacoes_resumo?: string; // computed from fields above
+  link?: string;
   ativo: boolean;
   origem: OrigemProduto;
   tipoProduto: TipoProduto;
@@ -26,19 +35,13 @@ export type ResumoConferencia = {
   produtosNaoEncontrados: number;
 };
 
-// ============================================================
-// IMPORTAÇÃO DE PRODUTOS (JSON externo)
-// Estrutura aceita por importarCatalogoExterno.
-// ============================================================
-
 export type ProdutoImportacao = {
   codigoInterno: string;
   codigoBarras: string | null;
   nome: string;
   marca?: string | null;
   categoria?: string | null;
-  modelo?: string | null;
-  descricao?: string | null;
+  especificacoes_resumo?: string | null;
   tipoProduto?: string | null;
   codigoPar?: string | null;
 };
@@ -89,13 +92,27 @@ export type ResumoRevisao = {
 // completarProdutoDesconhecido().
 // ============================================================
 
+export type NfItem = {
+  codigoInterno: string;
+  quantidadeEsperada: number;
+};
+
 export type DadosProdutoRapido = {
   codigoInterno?: string;
   nome: string;
   marca?: string;
   categoria?: string;
+  subcategoria?: string;
   modelo?: string;
-  descricao?: string;
+  capacidad?: string;
+  tecnologia?: string;
+  ciclo?: string;
+  voltaje?: string;
+  color?: string;
+  peso?: string;
+  dimensiones?: string;
+  especificacoes_resumo?: string;
+  link?: string;
   tipoProduto?: TipoProduto;
   codigoPar?: string;
 };

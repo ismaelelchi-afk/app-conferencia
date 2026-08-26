@@ -9,6 +9,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   atualizarProduto,
   completarProdutoDesconhecido,
+  formatarCodigoInterno,
   listarProdutosNaoCatalogo,
   removerProduto,
 } from '@/database/database';
@@ -172,7 +174,7 @@ export default function GerenciarProdutosScreen() {
                   </View>
 
                   <Text style={styles.cardCode}>
-                    {produto.codigoInterno}
+                    {formatarCodigoInterno(produto.codigoInterno)}
                   </Text>
 
                   <Text style={styles.cardBarcode}>
@@ -222,8 +224,15 @@ function ModalGerenciarProduto({
   );
   const [marca, setMarca] = useState(produto.marca ?? '');
   const [categoria, setCategoria] = useState(produto.categoria ?? '');
+  const [subcategoria, setSubcategoria] = useState(produto.subcategoria ?? '');
   const [modelo, setModelo] = useState(produto.modelo ?? '');
-  const [descricao, setDescricao] = useState(produto.descricao ?? '');
+  const [capacidad, setCapacidad] = useState(produto.capacidad ?? '');
+  const [tecnologia, setTecnologia] = useState(produto.tecnologia ?? '');
+  const [ciclo, setCiclo] = useState(produto.ciclo ?? '');
+  const [voltaje, setVoltaje] = useState(produto.voltaje ?? '');
+  const [color, setColor] = useState(produto.color ?? '');
+  const [peso, setPeso] = useState(produto.peso ?? '');
+  const [dimensiones, setDimensiones] = useState(produto.dimensiones ?? '');
 
   const [salvando, setSalvando] = useState(false);
   const [removendo, setRemovendo] = useState(false);
@@ -246,14 +255,25 @@ function ModalGerenciarProduto({
     setErro(null);
 
     try {
+      const camposEspec = {
+        subcategoria: subcategoria.trim() || undefined,
+        modelo: modelo.trim() || undefined,
+        capacidad: capacidad.trim() || undefined,
+        tecnologia: tecnologia.trim() || undefined,
+        ciclo: ciclo.trim() || undefined,
+        voltaje: voltaje.trim() || undefined,
+        color: color.trim() || undefined,
+        peso: peso.trim() || undefined,
+        dimensiones: dimensiones.trim() || undefined,
+      };
+
       if (ehDesconhecido) {
         const dados: DadosProdutoRapido = {
           codigoInterno: codigoInterno.trim() || undefined,
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
-          modelo: modelo.trim() || undefined,
-          descricao: descricao.trim() || undefined,
+          ...camposEspec,
         };
 
         const novoCodigoInterno = await completarProdutoDesconhecido(
@@ -267,8 +287,7 @@ function ModalGerenciarProduto({
           nome: dados.nome,
           marca: dados.marca,
           categoria: dados.categoria,
-          modelo: dados.modelo,
-          descricao: dados.descricao,
+          ...camposEspec,
           origem: 'manual',
         });
       } else {
@@ -278,8 +297,7 @@ function ModalGerenciarProduto({
           nome: nome.trim(),
           marca: marca.trim() || undefined,
           categoria: categoria.trim() || undefined,
-          modelo: modelo.trim() || undefined,
-          descricao: descricao.trim() || undefined,
+          ...camposEspec,
         };
 
         const sucesso = await atualizarProduto(produtoAtualizado, produto.codigoInterno);
@@ -380,36 +398,43 @@ function ModalGerenciarProduto({
           />
 
           <Text style={styles.editLabel}>CATEGORIA</Text>
-          <TextInput
-            style={styles.editInput}
-            value={categoria}
-            onChangeText={setCategoria}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            editable={!salvando && !removendo}
-          />
+          <TextInput style={styles.editInput} value={categoria} onChangeText={setCategoria} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>SUBCATEGORÍA</Text>
+          <TextInput style={styles.editInput} value={subcategoria} onChangeText={setSubcategoria} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
 
           <Text style={styles.editLabel}>MODELO</Text>
-          <TextInput
-            style={styles.editInput}
-            value={modelo}
-            onChangeText={setModelo}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            editable={!salvando && !removendo}
-          />
+          <TextInput style={styles.editInput} value={modelo} onChangeText={setModelo} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
 
-          <Text style={styles.editLabel}>DESCRIÇÃO</Text>
-          <TextInput
-            style={[styles.editInput, styles.editInputMultiline]}
-            value={descricao}
-            onChangeText={setDescricao}
-            placeholder="Opcional"
-            placeholderTextColor="#98A2B3"
-            multiline
-            numberOfLines={3}
-            editable={!salvando && !removendo}
-          />
+          <Text style={styles.editLabel}>CAPACIDAD</Text>
+          <TextInput style={styles.editInput} value={capacidad} onChangeText={setCapacidad} placeholder="Ej.: 9000 BTU" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>TECNOLOGÍA</Text>
+          <TextInput style={styles.editInput} value={tecnologia} onChangeText={setTecnologia} placeholder="Ej.: Inverter" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>CICLO</Text>
+          <TextInput style={styles.editInput} value={ciclo} onChangeText={setCiclo} placeholder="Ej.: Frío/Calor" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>VOLTAJE</Text>
+          <TextInput style={styles.editInput} value={voltaje} onChangeText={setVoltaje} placeholder="Ej.: 220V" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>COLOR</Text>
+          <TextInput style={styles.editInput} value={color} onChangeText={setColor} placeholder="Opcional" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>PESO</Text>
+          <TextInput style={styles.editInput} value={peso} onChangeText={setPeso} placeholder="Ej.: 12 kg" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          <Text style={styles.editLabel}>DIMENSIONES</Text>
+          <TextInput style={styles.editInput} value={dimensiones} onChangeText={setDimensiones} placeholder="Ej.: 80x30x20 cm" placeholderTextColor="#98A2B3" editable={!salvando && !removendo} />
+
+          {produto.link ? (
+            <>
+              <Text style={styles.editLabel}>LINK</Text>
+              <Pressable onPress={() => { void Linking.openURL(produto.link!); }}>
+                <Text style={styles.linkText} numberOfLines={2}>{produto.link}</Text>
+              </Pressable>
+            </>
+          ) : null}
 
           <Pressable
             style={[
@@ -659,12 +684,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  editInputMultiline: {
-    height: 80,
-    paddingTop: 12,
-    textAlignVertical: 'top',
-  },
-
   editTitle: {
     marginTop: 4,
     fontSize: 17,
@@ -692,6 +711,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#667085',
     letterSpacing: 0.6,
+  },
+
+  linkText: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#208AEF',
+    textDecorationLine: 'underline',
   },
 
   editInput: {

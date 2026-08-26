@@ -21,10 +21,8 @@ import {
   apagarHistoricoFinalizado,
   contarProdutos,
   contarProdutosPorOrigem,
-  exportarCatalogo,
   exportarCatalogoExcel,
   exportarHistoricoExcel,
-  importarCatalogoExterno,
   importarCatalogoExcel,
   obterConfiguracao,
   obterDadosExportacaoHistorico,
@@ -51,11 +49,9 @@ export default function ConfiguracoesScreen() {
   >(null);
   const [produtosParaRevisar, setProdutosParaRevisar] = useState(0);
 
-  const [reimportando, setReimportando] = useState(false);
   const [importandoExcel, setImportandoExcel] = useState(false);
   const [exportandoExcel, setExportandoExcel] = useState(false);
   const [exportandoHistoricoExcel, setExportandoHistoricoExcel] = useState(false);
-  const [exportandoCatalogo, setExportandoCatalogo] = useState(false);
   const [exportando, setExportando] = useState(false);
   const [apagando, setApagando] = useState(false);
   const [resetando, setResetando] = useState(false);
@@ -158,45 +154,6 @@ export default function ConfiguracoesScreen() {
     });
   }
 
-  async function importarCatalogoDoDispositivo() {
-    if (reimportando) return;
-
-    setMensagem(null);
-
-    try {
-      const resultado = await DocumentPicker.getDocumentAsync({
-        type: 'application/json',
-        copyToCacheDirectory: true,
-      });
-
-      if (resultado.canceled || !resultado.assets?.length) {
-        return;
-      }
-
-      const arquivo = resultado.assets[0];
-
-      setReimportando(true);
-
-      const conteudo = await FileSystem.readAsStringAsync(arquivo.uri);
-      const total = await importarCatalogoExterno(conteudo);
-
-      const [novaData, novoTotal] = await Promise.all([
-        obterConfiguracao('catalogo_atualizado_em', ''),
-        contarProdutos(),
-      ]);
-
-      setCatalogoAtualizadoEm(novaData || null);
-      setTotalProdutos(novoTotal);
-      setMensagem(`Catálogo importado: ${total} produtos.`);
-    } catch (error) {
-      const msg =
-        error instanceof Error ? error.message : 'Erro ao importar catálogo.';
-      setMensagem(msg);
-    } finally {
-      setReimportando(false);
-    }
-  }
-
   async function importarCatalogoDeExcel() {
     if (importandoExcel) return;
 
@@ -216,9 +173,15 @@ export default function ConfiguracoesScreen() {
       setImportandoExcel(true);
 
       const arquivo = resultado.assets[0];
-      const base64 = await FileSystem.readAsStringAsync(arquivo.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const response = await fetch(arquivo.uri);
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+      }
+      const base64 = btoa(binary);
 
       const total = await importarCatalogoExcel(base64);
 
@@ -263,27 +226,6 @@ export default function ConfiguracoesScreen() {
       setMensagem('Não foi possível exportar o Excel.');
     } finally {
       setExportandoExcel(false);
-    }
-  }
-
-  async function exportarCatalogoDoDispositivo() {
-    if (exportandoCatalogo) return;
-
-    setExportandoCatalogo(true);
-    setMensagem(null);
-
-    try {
-      const json = await exportarCatalogo();
-
-      await Share.share({
-        message: json,
-        title: 'Catálogo RAMSONS — backup',
-      });
-    } catch (error) {
-      console.error('Erro ao exportar catálogo:', error);
-      setMensagem('Não foi possível exportar o catálogo.');
-    } finally {
-      setExportandoCatalogo(false);
     }
   }
 
@@ -661,58 +603,6 @@ export default function ConfiguracoesScreen() {
             </View>
 
             {exportandoExcel ? (
-              <ActivityIndicator size="small" />
-            ) : (
-              <Text style={styles.actionArrow}>›</Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            style={[styles.actionCard, reimportando && styles.cardDisabled]}
-            onPress={() => {
-              void importarCatalogoDoDispositivo();
-            }}
-            disabled={reimportando}
-          >
-            <View style={styles.actionInfo}>
-              <Text style={styles.actionTitle}>
-                Importar catálogo do dispositivo
-              </Text>
-              <Text style={styles.actionText}>
-                Escolha um arquivo .json do Android para
-                substituir o catálogo atual. Produtos manuais
-                e não identificados não são afetados.
-              </Text>
-            </View>
-
-            {reimportando ? (
-              <ActivityIndicator size="small" />
-            ) : (
-              <Text style={styles.actionArrow}>›</Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            style={[
-              styles.actionCard,
-              exportandoCatalogo && styles.cardDisabled,
-            ]}
-            onPress={() => {
-              void exportarCatalogoDoDispositivo();
-            }}
-            disabled={exportandoCatalogo}
-          >
-            <View style={styles.actionInfo}>
-              <Text style={styles.actionTitle}>
-                Exportar catálogo do dispositivo
-              </Text>
-              <Text style={styles.actionText}>
-                Compartilha um arquivo .json com todos os
-                produtos. Pode ser reimportado depois.
-              </Text>
-            </View>
-
-            {exportandoCatalogo ? (
               <ActivityIndicator size="small" />
             ) : (
               <Text style={styles.actionArrow}>›</Text>

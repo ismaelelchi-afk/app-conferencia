@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 
 import {
-  importarProdutosRamsons,
   inicializarDatabase,
 } from '@/database/database';
 
@@ -61,7 +60,6 @@ export default function RootLayout() {
     async function prepararDatabase() {
       try {
         await inicializarDatabase();
-        await importarProdutosRamsons();
 
         if (ativo) {
           setDatabaseReady(true);

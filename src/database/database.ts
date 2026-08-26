@@ -10,6 +10,7 @@ import type {
   Conferencia,
   DadosProdutoRapido,
   LeituraConferencia,
+  NfItem,
   Produto,
   ProdutoImportacao,
   ResumoConferencia,
@@ -20,26 +21,35 @@ import type {
   TipoProduto,
 } from '@/models/produto';
 
-import produtosRamsons from '@/assets/data/produtos-ramsons.json';
-
 // Nombre del archivo de base de datos local.
 const DATABASE_NAME = 'ramsons_conferencia.db';
 
 // Conexión reutilizable.
 let database: SQLite.SQLiteDatabase | null = null;
+// Promise cache — evita que dos llamadas simultáneas abran dos conexiones.
+let abrindoPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 // ============================================================
 // OBTENER CONEXIÓN
 // ============================================================
 
 async function obterDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (database) {
-    return database;
+  if (database) return database;
+
+  if (!abrindoPromise) {
+    abrindoPromise = SQLite.openDatabaseAsync(DATABASE_NAME)
+      .then((db) => {
+        database = db;
+        abrindoPromise = null;
+        return db;
+      })
+      .catch((err) => {
+        abrindoPromise = null;
+        throw err;
+      });
   }
 
-  database = await SQLite.openDatabaseAsync(DATABASE_NAME);
-
-  return database;
+  return abrindoPromise;
 }
 
 // ============================================================
@@ -48,6 +58,11 @@ async function obterDatabase(): Promise<SQLite.SQLiteDatabase> {
 
 export function formatarNumeroConferencia(id: number): string {
   return `#${String(id).padStart(6, '0')}`;
+}
+
+// Exibe códigos numéricos com 8 dígitos; códigos alfanuméricos inalterados.
+export function formatarCodigoInterno(codigo: string): string {
+  return /^\d+$/.test(codigo) ? codigo.padStart(8, '0') : codigo;
 }
 
 // ============================================================
@@ -71,6 +86,10 @@ function gerarCodigoInternoDesconhecido(codigoBarras: string): string {
 export async function inicializarDatabase(): Promise<void> {
   const db = await obterDatabase();
 
+  // WAL mode: serializa escritas, permite lecturas concurrentes sin bloqueo.
+  await db.execAsync('PRAGMA journal_mode = WAL;');
+  await db.execAsync('PRAGMA synchronous = NORMAL;');
+
   // ----------------------------------------------------------
   // PRODUTOS
   // ----------------------------------------------------------
@@ -82,12 +101,7 @@ export async function inicializarDatabase(): Promise<void> {
       nome TEXT NOT NULL,
       marca TEXT,
       categoria TEXT,
-      modelo TEXT,
-      unidade TEXT,
-      estoque INTEGER DEFAULT 0,
       ativo INTEGER NOT NULL DEFAULT 1,
-      url TEXT,
-      especificacoes TEXT,
       origem TEXT NOT NULL DEFAULT 'catalogo'
     );
   `);
@@ -156,12 +170,28 @@ export async function inicializarDatabase(): Promise<void> {
     `);
   }
 
-  // Migração: adiciona descricao em produtos se ainda não existir.
-  const colDescricao = await db.getFirstAsync<{ cnt: number }>(
-    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'descricao';`,
+  // Tabela nf_itens — itens esperados da nota fiscal por conferência.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS nf_itens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conferencia_id INTEGER NOT NULL,
+      codigo_interno TEXT NOT NULL,
+      quantidade_esperada INTEGER NOT NULL,
+      FOREIGN KEY (conferencia_id) REFERENCES conferencias(id)
+    );
+  `);
+
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_nf_itens_conferencia
+    ON nf_itens(conferencia_id, codigo_interno);
+  `);
+
+  // Migração: adiciona especificacoes_resumo se ainda não existir.
+  const colEspecResumo = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'especificacoes_resumo';`,
   );
-  if (!colDescricao || colDescricao.cnt === 0) {
-    await db.execAsync(`ALTER TABLE produtos ADD COLUMN descricao TEXT;`);
+  if (!colEspecResumo || colEspecResumo.cnt === 0) {
+    await db.execAsync(`ALTER TABLE produtos ADD COLUMN especificacoes_resumo TEXT;`);
   }
 
   // Migração: ar condicionado — flag e código COND em produtos.
@@ -201,10 +231,28 @@ export async function inicializarDatabase(): Promise<void> {
     `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = 'codigo_par';`,
   );
   if (!colCodigoPar || colCodigoPar.cnt === 0) {
-    await db.execAsync(
-      `ALTER TABLE produtos ADD COLUMN codigo_par TEXT;`,
-    );
+    await db.execAsync(`ALTER TABLE produtos ADD COLUMN codigo_par TEXT;`);
   }
+
+  // Migração: campos individuais de especificação.
+  async function adicionarColunaSe(coluna: string, tipo = 'TEXT'): Promise<void> {
+    const r = await db.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM pragma_table_info('produtos') WHERE name = '${coluna}';`,
+    );
+    if (!r || r.cnt === 0) {
+      await db.execAsync(`ALTER TABLE produtos ADD COLUMN ${coluna} ${tipo};`);
+    }
+  }
+  await adicionarColunaSe('modelo');
+  await adicionarColunaSe('subcategoria');
+  await adicionarColunaSe('capacidad');
+  await adicionarColunaSe('tecnologia');
+  await adicionarColunaSe('ciclo');
+  await adicionarColunaSe('voltaje');
+  await adicionarColunaSe('color');
+  await adicionarColunaSe('peso');
+  await adicionarColunaSe('dimensiones');
+  await adicionarColunaSe('link');
 
   // ----------------------------------------------------------
   // CONFIGURAÇÕES (chave/valor)
@@ -216,6 +264,19 @@ export async function inicializarDatabase(): Promise<void> {
       valor TEXT NOT NULL
     );
   `);
+
+  // Migração única: limpa catálogo JSON embutido (removido na v2).
+  // Executa apenas uma vez; após isso a flag 'catalogo_limpo_v2' impede repetição.
+  const migV3 = await db.getFirstAsync<{ valor: string }>(
+    `SELECT valor FROM configuracoes WHERE chave = 'catalogo_limpo_v3' LIMIT 1;`,
+  );
+  if (!migV3) {
+    await db.runAsync(`DELETE FROM produtos;`);
+    await db.runAsync(
+      `INSERT INTO configuracoes (chave, valor) VALUES ('catalogo_limpo_v3', '1')
+       ON CONFLICT(chave) DO UPDATE SET valor = '1';`,
+    );
+  }
 }
 
 // ============================================================
@@ -264,8 +325,17 @@ type ProdutoSQLite = {
   nome: string;
   marca: string | null;
   categoria: string | null;
+  subcategoria: string | null;
   modelo: string | null;
-  descricao: string | null;
+  capacidad: string | null;
+  tecnologia: string | null;
+  ciclo: string | null;
+  voltaje: string | null;
+  color: string | null;
+  peso: string | null;
+  dimensiones: string | null;
+  especificacoes_resumo: string | null;
+  link: string | null;
   ativo: number;
   origem: string;
   es_ar_acondicionado: number;
@@ -273,6 +343,23 @@ type ProdutoSQLite = {
 };
 
 function converterProduto(produto: ProdutoSQLite): Produto {
+  const partes = [
+    produto.modelo,
+    produto.subcategoria,
+    produto.capacidad,
+    produto.tecnologia,
+    produto.ciclo,
+    produto.voltaje,
+    produto.color,
+    produto.peso,
+    produto.dimensiones,
+  ].filter(Boolean) as string[];
+
+  const especificacoes_resumo =
+    partes.length > 0
+      ? partes.join(' | ')
+      : produto.especificacoes_resumo ?? undefined;
+
   return {
     codigoInterno: produto.codigo_interno,
     codigoBarras: produto.codigo_barras ?? '',
@@ -280,8 +367,17 @@ function converterProduto(produto: ProdutoSQLite): Produto {
     nome: produto.nome,
     marca: produto.marca ?? undefined,
     categoria: produto.categoria ?? undefined,
+    subcategoria: produto.subcategoria ?? undefined,
     modelo: produto.modelo ?? undefined,
-    descricao: produto.descricao ?? undefined,
+    capacidad: produto.capacidad ?? undefined,
+    tecnologia: produto.tecnologia ?? undefined,
+    ciclo: produto.ciclo ?? undefined,
+    voltaje: produto.voltaje ?? undefined,
+    color: produto.color ?? undefined,
+    peso: produto.peso ?? undefined,
+    dimensiones: produto.dimensiones ?? undefined,
+    especificacoes_resumo,
+    link: produto.link ?? undefined,
     ativo: produto.ativo === 1,
     origem: (produto.origem as Produto['origem']) ?? 'catalogo',
     tipoProduto: (produto.tipo_produto as TipoProduto) ?? 'normal',
@@ -303,22 +399,40 @@ async function adicionarProduto(produto: Produto): Promise<void> {
         nome,
         marca,
         categoria,
+        subcategoria,
         modelo,
-        descricao,
+        capacidad,
+        tecnologia,
+        ciclo,
+        voltaje,
+        color,
+        peso,
+        dimensiones,
+        especificacoes_resumo,
+        link,
         ativo,
         origem,
         tipo_produto,
         codigo_par
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `,
     produto.codigoInterno,
     produto.codigoBarras || null,
     produto.nome,
     produto.marca ?? null,
     produto.categoria ?? null,
+    produto.subcategoria ?? null,
     produto.modelo ?? null,
-    produto.descricao ?? null,
+    produto.capacidad ?? null,
+    produto.tecnologia ?? null,
+    produto.ciclo ?? null,
+    produto.voltaje ?? null,
+    produto.color ?? null,
+    produto.peso ?? null,
+    produto.dimensiones ?? null,
+    produto.especificacoes_resumo ?? null,
+    produto.link ?? null,
     produto.ativo ? 1 : 0,
     produto.origem,
     produto.tipoProduto ?? 'normal',
@@ -459,8 +573,17 @@ export async function atualizarProduto(
            nome = ?,
            marca = ?,
            categoria = ?,
+           subcategoria = ?,
            modelo = ?,
-           descricao = ?,
+           capacidad = ?,
+           tecnologia = ?,
+           ciclo = ?,
+           voltaje = ?,
+           color = ?,
+           peso = ?,
+           dimensiones = ?,
+           link = ?,
+           especificacoes_resumo = NULL,
            tipo_produto = ?,
            codigo_par = ?
          WHERE codigo_interno = ?;`,
@@ -468,8 +591,16 @@ export async function atualizarProduto(
         produto.nome,
         produto.marca ?? null,
         produto.categoria ?? null,
+        produto.subcategoria ?? null,
         produto.modelo ?? null,
-        produto.descricao ?? null,
+        produto.capacidad ?? null,
+        produto.tecnologia ?? null,
+        produto.ciclo ?? null,
+        produto.voltaje ?? null,
+        produto.color ?? null,
+        produto.peso ?? null,
+        produto.dimensiones ?? null,
+        produto.link ?? null,
         produto.tipoProduto ?? 'normal',
         produto.codigoPar ?? null,
         codigoInternoOriginal,
@@ -553,184 +684,6 @@ export async function contarProdutosPorOrigem(): Promise<{
 }
 
 // ============================================================
-// IMPORTAR CATÁLOGO REAL RAMSONS (primeira vez)
-// Se ejecuta solamente si la base está vacía.
-// ============================================================
-
-export async function importarProdutosRamsons(): Promise<number> {
-  const total = await contarProdutos();
-
-  if (total > 0) {
-    return 0;
-  }
-
-  const db = await obterDatabase();
-
-  const lista = produtosRamsons as ProdutoImportacao[];
-
-  await db.withTransactionAsync(async () => {
-    for (const produto of lista) {
-      await db.runAsync(
-        `
-          INSERT OR IGNORE INTO produtos (
-            codigo_interno,
-            codigo_barras,
-            nome,
-            marca,
-            categoria,
-            modelo,
-            descricao,
-            origem
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
-        `,
-        produto.codigoInterno,
-        produto.codigoBarras || null,
-        produto.nome,
-        produto.marca ?? null,
-        produto.categoria ?? null,
-        produto.modelo ?? null,
-        produto.descricao ?? null,
-      );
-    }
-  });
-
-  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
-
-  return lista.length;
-}
-
-// ============================================================
-// REIMPORTAR CATÁLOGO EMBUTIDO (via Configurações)
-// Substitui somente produtos com origem='catalogo'.
-// Produtos 'manual' e 'desconhecido' — incluindo os que você
-// editou pela tela de Consultar produto — não são afetados.
-// ============================================================
-
-export async function reimportarCatalogoEmbutido(): Promise<number> {
-  const db = await obterDatabase();
-
-  const lista = produtosRamsons as ProdutoImportacao[];
-
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM produtos WHERE origem = 'catalogo';`);
-
-    for (const produto of lista) {
-      await db.runAsync(
-        `
-          INSERT OR IGNORE INTO produtos (
-            codigo_interno,
-            codigo_barras,
-            nome,
-            marca,
-            categoria,
-            modelo,
-            descricao,
-            origem
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'catalogo');
-        `,
-        produto.codigoInterno,
-        produto.codigoBarras || null,
-        produto.nome,
-        produto.marca ?? null,
-        produto.categoria ?? null,
-        produto.modelo ?? null,
-        produto.descricao ?? null,
-      );
-    }
-  });
-
-  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
-
-  return lista.length;
-}
-
-// ============================================================
-// IMPORTAR CATÁLOGO DE ARQUIVO EXTERNO (JSON do dispositivo)
-// Substitui somente produtos com origem='catalogo'.
-// Retorna a quantidade de produtos importados.
-// Lança erro com mensagem legível se o arquivo for inválido.
-// ============================================================
-
-export async function importarCatalogoExterno(
-  jsonTexto: string,
-): Promise<number> {
-  let lista: ProdutoImportacao[];
-
-  try {
-    const parsed: unknown = JSON.parse(jsonTexto);
-
-    if (!Array.isArray(parsed)) {
-      throw new Error('O arquivo deve conter um array JSON de produtos.');
-    }
-
-    // Valida que cada item tem pelo menos codigoInterno e nome.
-    for (const item of parsed) {
-      if (
-        typeof item !== 'object' ||
-        item === null ||
-        typeof (item as Record<string, unknown>).codigoInterno !== 'string' ||
-        typeof (item as Record<string, unknown>).nome !== 'string'
-      ) {
-        throw new Error(
-          'Formato inválido: cada produto precisa de "codigoInterno" e "nome".',
-        );
-      }
-    }
-
-    lista = parsed as ProdutoImportacao[];
-  } catch (e) {
-    throw new Error(
-      e instanceof Error ? e.message : 'Arquivo JSON inválido.',
-    );
-  }
-
-  if (lista.length === 0) {
-    throw new Error('O arquivo não contém nenhum produto.');
-  }
-
-  const db = await obterDatabase();
-
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM produtos WHERE origem = 'catalogo';`);
-
-    for (const produto of lista) {
-      await db.runAsync(
-        `
-          INSERT OR IGNORE INTO produtos (
-            codigo_interno,
-            codigo_barras,
-            nome,
-            marca,
-            categoria,
-            modelo,
-            descricao,
-            tipo_produto,
-            codigo_par,
-            origem
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');
-        `,
-        produto.codigoInterno,
-        produto.codigoBarras || null,
-        produto.nome,
-        produto.marca ?? null,
-        produto.categoria ?? null,
-        produto.modelo ?? null,
-        produto.descricao ?? null,
-        produto.tipoProduto ?? 'normal',
-        produto.codigoPar ?? null,
-      );
-    }
-  });
-
-  await salvarConfiguracao('catalogo_atualizado_em', new Date().toISOString());
-
-  return lista.length;
-}
-
-// ============================================================
 // IMPORTAR CATÁLOGO DE EXCEL (.xlsx)
 // Espera planilha com colunas "codigo de barras" e "nome"
 // (case-insensitive, qualquer ordem).
@@ -750,28 +703,112 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
     String(c ?? '').toLowerCase().trim(),
   );
 
-  function acharColuna(...nomes: string[]): number {
-    for (const nome of nomes) {
-      const idx = cabecalho.findIndex((h) => h.includes(nome));
-      if (idx >= 0) return idx;
+  // Exclusão de colunas já atribuídas para evitar conflito entre
+  // "Código de barras" e "Código de barras 2".
+  const encontrados = new Set<number>();
+
+  function acharColuna(...termos: string[]): number {
+    // Exact match first
+    for (const t of termos) {
+      const idx = cabecalho.findIndex((h, i) => !encontrados.has(i) && h === t);
+      if (idx >= 0) { encontrados.add(idx); return idx; }
+    }
+    // Substring fallback
+    for (const t of termos) {
+      const idx = cabecalho.findIndex((h, i) => !encontrados.has(i) && h.includes(t));
+      if (idx >= 0) { encontrados.add(idx); return idx; }
     }
     return -1;
   }
 
-  const colBarras = acharColuna('codigo de barras', 'código de barras', 'barras', 'barcode', 'ean', 'codigo_barras');
-  const colNome   = acharColuna('nome', 'name', 'produto', 'descripcion', 'descripción', 'descricao');
+  // Detectar "barras 2" ANTES de "barras" para evitar ambiguidade
+  const colBarras2  = acharColuna('código de barras 2', 'codigo de barras 2', 'barras 2', 'barcode 2', 'ean2', 'ean 2');
+  const colBarras   = acharColuna('código de barras', 'codigo de barras', 'barcode', 'ean', 'barras');
+  const colInterno  = acharColuna('código interno', 'codigo interno', 'codigo_interno', 'interno');
+  const colNome     = acharColuna('nombre del producto', 'nombre', 'nome', 'name', 'produto');
+  const colMarca    = acharColuna('marca', 'brand');
+  const colCateg    = acharColuna('categoría', 'categoria', 'category');
+  const colSubCateg = acharColuna('subcategoría', 'subcategoria', 'subcategory', 'subcateg');
+  const colTipo     = acharColuna('tipo de producto', 'tipo', 'type');
+  const colModelo   = acharColuna('modelo', 'model');
+  const colCapacid  = acharColuna('capacidad', 'capacidade', 'capacity', 'btu');
+  const colTecnolog = acharColuna('tecnología', 'tecnologia', 'technology');
+  const colCiclo    = acharColuna('ciclo', 'cycle');
+  const colVoltaje  = acharColuna('voltaje', 'voltagem', 'voltage', 'volt');
+  const colColor    = acharColuna('color', 'cor', 'colour');
+  const colPeso     = acharColuna('peso', 'weight');
+  const colDimensi  = acharColuna('dimensiones', 'dimensões', 'dimensoes', 'dimensions');
+  const colPar      = acharColuna('código del conjunto', 'codigo del conjunto', 'conjunto', 'codigo_par', 'par');
+  const colLink     = acharColuna('link', 'url', 'enlace');
 
-  if (colBarras < 0) throw new Error('Coluna de código de barras não encontrada.');
-  if (colNome < 0)   throw new Error('Coluna de nome não encontrada.');
+  // colBarras2 é detectado mas não armazenado (campo único de barras)
+  void colBarras2;
 
-  const produtos: { codigoBarras: string; nome: string }[] = [];
+  if (colBarras < 0) throw new Error('Coluna "Código de barras" não encontrada.');
+  if (colNome < 0)   throw new Error('Coluna "Nombre del producto" não encontrada.');
+
+  function cel(linha: string[], col: number): string {
+    return col >= 0 ? String(linha[col] ?? '').trim() : '';
+  }
+
+  type LinhaImport = {
+    codigoInterno: string;
+    codigoBarras: string;
+    nome: string;
+    marca: string | null;
+    categoria: string | null;
+    subcategoria: string | null;
+    modelo: string | null;
+    capacidad: string | null;
+    tecnologia: string | null;
+    ciclo: string | null;
+    voltaje: string | null;
+    color: string | null;
+    peso: string | null;
+    dimensiones: string | null;
+    link: string | null;
+    tipoProduto: string;
+    codigoPar: string | null;
+  };
+
+  const produtos: LinhaImport[] = [];
 
   for (let i = 1; i < linhas.length; i++) {
     const linha = linhas[i];
-    const barras = String(linha[colBarras] ?? '').trim();
-    const nome   = String(linha[colNome]   ?? '').trim();
+    const barras = cel(linha, colBarras);
+    const nome   = cel(linha, colNome);
     if (!barras || !nome) continue;
-    produtos.push({ codigoBarras: barras, nome });
+
+    const interno   = cel(linha, colInterno);
+    const marca     = cel(linha, colMarca);
+    const categ     = cel(linha, colCateg);
+    const tipoRaw   = cel(linha, colTipo).toLowerCase();
+    const par       = cel(linha, colPar);
+
+    const tipoProduto =
+      tipoRaw === 'evaporadora' ? 'evaporadora'
+      : tipoRaw === 'condensadora' ? 'condensadora'
+      : 'normal';
+
+    produtos.push({
+      codigoInterno: interno || barras,
+      codigoBarras: barras,
+      nome,
+      marca: marca || null,
+      categoria: categ || null,
+      subcategoria: cel(linha, colSubCateg) || null,
+      modelo: cel(linha, colModelo) || null,
+      capacidad: cel(linha, colCapacid) || null,
+      tecnologia: cel(linha, colTecnolog) || null,
+      ciclo: cel(linha, colCiclo) || null,
+      voltaje: cel(linha, colVoltaje) || null,
+      color: cel(linha, colColor) || null,
+      peso: cel(linha, colPeso) || null,
+      dimensiones: cel(linha, colDimensi) || null,
+      link: cel(linha, colLink) || null,
+      tipoProduto,
+      codigoPar: par || null,
+    });
   }
 
   if (produtos.length === 0) throw new Error('Nenhum produto válido encontrado.');
@@ -779,17 +816,34 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
   const db = await obterDatabase();
 
   await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM produtos WHERE origem = 'catalogo';`);
-
     for (const p of produtos) {
-      await db.runAsync(
-        `INSERT OR IGNORE INTO produtos
-           (codigo_interno, codigo_barras, nome, tipo_produto, origem)
-         VALUES (?, ?, ?, 'normal', 'catalogo');`,
+      // Atualiza produto existente pelo código de barras
+      const upd = await db.runAsync(
+        `UPDATE produtos
+         SET nome = ?, marca = ?, categoria = ?, subcategoria = ?, modelo = ?,
+             capacidad = ?, tecnologia = ?, ciclo = ?, voltaje = ?, color = ?,
+             peso = ?, dimensiones = ?, link = ?, tipo_produto = ?, codigo_par = ?,
+             especificacoes_resumo = NULL, origem = 'catalogo', ativo = 1
+         WHERE codigo_barras = ?;`,
+        p.nome, p.marca, p.categoria, p.subcategoria, p.modelo,
+        p.capacidad, p.tecnologia, p.ciclo, p.voltaje, p.color,
+        p.peso, p.dimensiones, p.link, p.tipoProduto, p.codigoPar,
         p.codigoBarras,
-        p.codigoBarras,
-        p.nome,
       );
+
+      // Se não existe ainda, insere como novo
+      if (upd.changes === 0) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO produtos
+             (codigo_interno, codigo_barras, nome, marca, categoria,
+              subcategoria, modelo, capacidad, tecnologia, ciclo, voltaje, color, peso, dimensiones,
+              link, tipo_produto, codigo_par, origem)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');`,
+          p.codigoInterno, p.codigoBarras, p.nome, p.marca, p.categoria,
+          p.subcategoria, p.modelo, p.capacidad, p.tecnologia, p.ciclo,
+          p.voltaje, p.color, p.peso, p.dimensiones, p.link, p.tipoProduto, p.codigoPar,
+        );
+      }
     }
   });
 
@@ -818,95 +872,71 @@ export async function exportarCatalogoExcel(): Promise<string> {
     nome: string;
     marca: string | null;
     categoria: string | null;
+    subcategoria: string | null;
     modelo: string | null;
-    descricao: string | null;
+    capacidad: string | null;
+    tecnologia: string | null;
+    ciclo: string | null;
+    voltaje: string | null;
+    color: string | null;
+    peso: string | null;
+    dimensiones: string | null;
+    link: string | null;
     tipo_produto: string;
     codigo_par: string | null;
     origem: string;
   }>(`
-    SELECT codigo_interno, codigo_barras, nome, marca, categoria, modelo,
-           descricao, tipo_produto, codigo_par, origem
+    SELECT codigo_interno, codigo_barras, nome, marca, categoria,
+           subcategoria, modelo, capacidad, tecnologia, ciclo, voltaje, color, peso, dimensiones,
+           link, tipo_produto, codigo_par, origem
     FROM produtos
     WHERE ativo = 1
     ORDER BY nome COLLATE NOCASE ASC;
   `);
 
   const dados = rows.map((r) => ({
-    'Código Interno': r.codigo_interno,
-    'Código de Barras': r.codigo_barras ?? '',
-    'Nome': r.nome,
-    'Marca': r.marca ?? '',
-    'Categoria': r.categoria ?? '',
+    'Código de barras': r.codigo_barras ?? '',
+    'Código interno': r.codigo_interno,
     'Modelo': r.modelo ?? '',
-    'Descrição': r.descricao ?? '',
-    'Tipo': r.tipo_produto,
-    'Código do Conjunto': r.codigo_par ?? '',
-    'Origem': r.origem,
+    'Nombre del producto': r.nome,
+    'Marca': r.marca ?? '',
+    'Categoría': r.categoria ?? '',
+    'Subcategoría': r.subcategoria ?? '',
+    'Tipo de producto': r.tipo_produto,
+    'Capacidad': r.capacidad ?? '',
+    'Tecnología': r.tecnologia ?? '',
+    'Ciclo': r.ciclo ?? '',
+    'Voltaje': r.voltaje ?? '',
+    'Color': r.color ?? '',
+    'Peso': r.peso ?? '',
+    'Dimensiones': r.dimensiones ?? '',
+    'Link': r.link ?? '',
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(dados);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Produtos');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
 
-  // Ajusta largura das colunas
   worksheet['!cols'] = [
-    { wch: 16 }, // Código Interno
-    { wch: 18 }, // Código de Barras
-    { wch: 40 }, // Nome
+    { wch: 18 }, // Código de barras
+    { wch: 16 }, // Código interno
+    { wch: 16 }, // Modelo
+    { wch: 42 }, // Nombre del producto
     { wch: 18 }, // Marca
-    { wch: 18 }, // Categoria
-    { wch: 18 }, // Modelo
-    { wch: 30 }, // Descrição
-    { wch: 14 }, // Tipo
-    { wch: 18 }, // Código do Conjunto
-    { wch: 12 }, // Origem
+    { wch: 18 }, // Categoría
+    { wch: 16 }, // Subcategoría
+    { wch: 14 }, // Tipo de producto
+    { wch: 14 }, // Capacidad
+    { wch: 14 }, // Tecnología
+    { wch: 10 }, // Ciclo
+    { wch: 10 }, // Voltaje
+    { wch: 12 }, // Color
+    { wch: 10 }, // Peso
+    { wch: 20 }, // Dimensiones
+    { wch: 40 }, // Link
   ];
 
   return XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' }) as string;
-}
-
-export async function exportarCatalogo(): Promise<string> {
-  const db = await obterDatabase();
-
-  const rows = await db.getAllAsync<{
-    codigo_interno: string;
-    codigo_barras: string | null;
-    nome: string;
-    marca: string | null;
-    categoria: string | null;
-    modelo: string | null;
-    descricao: string | null;
-    tipo_produto: string;
-    codigo_par: string | null;
-  }>(`
-    SELECT
-      codigo_interno,
-      codigo_barras,
-      nome,
-      marca,
-      categoria,
-      modelo,
-      descricao,
-      tipo_produto,
-      codigo_par
-    FROM produtos
-    WHERE ativo = 1
-    ORDER BY nome COLLATE NOCASE ASC;
-  `);
-
-  const lista: ProdutoImportacao[] = rows.map((r) => ({
-    codigoInterno: r.codigo_interno,
-    codigoBarras: r.codigo_barras,
-    nome: r.nome,
-    marca: r.marca,
-    categoria: r.categoria,
-    modelo: r.modelo,
-    descricao: r.descricao,
-    tipoProduto: r.tipo_produto !== 'normal' ? r.tipo_produto : undefined,
-    codigoPar: r.codigo_par,
-  }));
-
-  return JSON.stringify(lista, null, 2);
 }
 
 // ============================================================
@@ -920,8 +950,16 @@ export type DadosProdutoManual = {
   nome: string;
   marca?: string;
   categoria?: string;
+  subcategoria?: string;
   modelo?: string;
-  descricao?: string;
+  capacidad?: string;
+  tecnologia?: string;
+  ciclo?: string;
+  voltaje?: string;
+  color?: string;
+  peso?: string;
+  dimensiones?: string;
+  link?: string;
   tipoProduto?: TipoProduto;
 };
 
@@ -937,8 +975,16 @@ export async function criarProdutoManual(
     nome: dados.nome,
     marca: dados.marca,
     categoria: dados.categoria,
+    subcategoria: dados.subcategoria,
     modelo: dados.modelo,
-    descricao: dados.descricao,
+    capacidad: dados.capacidad,
+    tecnologia: dados.tecnologia,
+    ciclo: dados.ciclo,
+    voltaje: dados.voltaje,
+    color: dados.color,
+    peso: dados.peso,
+    dimensiones: dados.dimensiones,
+    link: dados.link,
     ativo: true,
     origem: 'manual',
     tipoProduto: dados.tipoProduto ?? 'normal',
@@ -1023,6 +1069,12 @@ export async function completarProdutoDesconhecido(
       novoCodigoInterno,
     );
 
+    const temCamposIndividuais = !!(
+      dados.modelo || dados.subcategoria || dados.capacidad ||
+      dados.tecnologia || dados.ciclo || dados.voltaje ||
+      dados.color || dados.peso || dados.dimensiones
+    );
+
     await db.runAsync(
       `UPDATE produtos
        SET
@@ -1030,8 +1082,17 @@ export async function completarProdutoDesconhecido(
          nome = ?,
          marca = ?,
          categoria = ?,
+         subcategoria = ?,
          modelo = ?,
-         descricao = ?,
+         capacidad = ?,
+         tecnologia = ?,
+         ciclo = ?,
+         voltaje = ?,
+         color = ?,
+         peso = ?,
+         dimensiones = ?,
+         link = ?,
+         especificacoes_resumo = ?,
          tipo_produto = ?,
          codigo_par = ?,
          origem = 'manual'
@@ -1040,8 +1101,17 @@ export async function completarProdutoDesconhecido(
       dados.nome,
       dados.marca ?? null,
       dados.categoria ?? null,
+      dados.subcategoria ?? null,
       dados.modelo ?? null,
-      dados.descricao ?? null,
+      dados.capacidad ?? null,
+      dados.tecnologia ?? null,
+      dados.ciclo ?? null,
+      dados.voltaje ?? null,
+      dados.color ?? null,
+      dados.peso ?? null,
+      dados.dimensiones ?? null,
+      dados.link ?? null,
+      temCamposIndividuais ? null : (dados.especificacoes_resumo ?? null),
       dados.tipoProduto ?? 'normal',
       dados.codigoPar ?? null,
       codigoInternoOriginal,
@@ -1255,9 +1325,10 @@ export async function registrarLeituraConferencia(
         quantidade,
         primeira_leitura,
         ultima_leitura,
-        status
+        status,
+        status_revisao
       )
-      VALUES (?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, 'ok');
     `,
     conferenciaId,
     codigoInterno,
@@ -1357,8 +1428,17 @@ type LeituraConferenciaSQLite = {
   nome: string;
   marca: string | null;
   categoria: string | null;
+  subcategoria: string | null;
   modelo: string | null;
-  descricao: string | null;
+  capacidad: string | null;
+  tecnologia: string | null;
+  ciclo: string | null;
+  voltaje: string | null;
+  color: string | null;
+  peso: string | null;
+  dimensiones: string | null;
+  especificacoes_resumo: string | null;
+  link: string | null;
   ativo: number;
   origem: string;
   tipo_produto: string;
@@ -1384,8 +1464,17 @@ export async function obterLeiturasConferencia(
         produtos.nome AS nome,
         produtos.marca AS marca,
         produtos.categoria AS categoria,
+        produtos.subcategoria AS subcategoria,
         produtos.modelo AS modelo,
-        produtos.descricao AS descricao,
+        produtos.capacidad AS capacidad,
+        produtos.tecnologia AS tecnologia,
+        produtos.ciclo AS ciclo,
+        produtos.voltaje AS voltaje,
+        produtos.color AS color,
+        produtos.peso AS peso,
+        produtos.dimensiones AS dimensiones,
+        produtos.especificacoes_resumo AS especificacoes_resumo,
+        produtos.link AS link,
         produtos.ativo AS ativo,
         produtos.origem AS origem,
         produtos.tipo_produto AS tipo_produto
@@ -1407,8 +1496,17 @@ export async function obterLeiturasConferencia(
       nome: item.nome,
       marca: item.marca,
       categoria: item.categoria,
+      subcategoria: item.subcategoria,
       modelo: item.modelo,
-      descricao: item.descricao,
+      capacidad: item.capacidad,
+      tecnologia: item.tecnologia,
+      ciclo: item.ciclo,
+      voltaje: item.voltaje,
+      color: item.color,
+      peso: item.peso,
+      dimensiones: item.dimensiones,
+      especificacoes_resumo: item.especificacoes_resumo,
+      link: item.link,
       ativo: item.ativo,
       origem: item.origem,
       es_ar_acondicionado: 0,
@@ -1739,4 +1837,157 @@ export async function obterResumoRevisao(
     pendente: resultado?.pendente ?? 0,
     total: resultado?.total ?? 0,
   };
+}
+
+// ============================================================
+// NF_ITENS — ITENS ESPERADOS DA NOTA FISCAL
+// ============================================================
+
+type ResultadoImportNf = {
+  carregados: number;
+  ignorados: number;
+  codigosDesconhecidos: string[];
+};
+
+export async function importarNfItens(
+  conferenciaId: number,
+  base64: string,
+): Promise<ResultadoImportNf> {
+  const workbook = XLSX.read(base64, { type: 'base64' });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) throw new Error('Arquivo Excel vazio.');
+
+  const sheet = workbook.Sheets[sheetName];
+  const linhas = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+
+  if (linhas.length < 2) throw new Error('Planilha sem dados.');
+
+  const cabecalho = linhas[0].map((c) => String(c ?? '').toLowerCase().trim().replace(/[\s.]+/g, '_'));
+
+  const colCodigo = cabecalho.findIndex((h) =>
+    [
+      'codigo_interno', 'código_interno', 'codigo', 'código',
+      'cod_interno', 'cod', 'referencia', 'referência', 'item',
+      'codigo_barras', 'código_barras', 'cod_barras', 'barras',
+      'ean', 'gtin', 'codprod', 'cod_prod',
+    ].includes(h),
+  );
+  const colQtd = cabecalho.findIndex((h) =>
+    [
+      'quantidade', 'qtd', 'qty', 'quantity', 'cant', 'cantidad',
+      'qtde', 'quant', 'qde', 'qt', 'qtdade', 'qtd_',
+    ].includes(h),
+  );
+
+  if (colCodigo < 0) throw new Error(`Coluna de código não encontrada. Cabeçalhos detectados: ${cabecalho.join(', ')}`);
+  if (colQtd < 0) throw new Error(`Coluna de quantidade não encontrada. Cabeçalhos detectados: ${cabecalho.join(', ')}`);
+
+  // Agrupa quantidades por código bruto do Excel.
+  const mapaQtdBruto = new Map<string, number>();
+  let ignorados = 0;
+
+  for (let i = 1; i < linhas.length; i++) {
+    const linha = linhas[i];
+    if (!linha || linha.length === 0) continue;
+
+    const codigo = String(linha[colCodigo] ?? '').trim();
+    const qtdRaw = Number(linha[colQtd]);
+
+    if (!codigo) { ignorados++; continue; }
+    if (!Number.isFinite(qtdRaw) || qtdRaw <= 0) { ignorados++; continue; }
+
+    mapaQtdBruto.set(codigo, (mapaQtdBruto.get(codigo) ?? 0) + Math.floor(qtdRaw));
+  }
+
+  // Resolve cada código bruto para o codigo_interno do catálogo.
+  // Tenta: (1) match exato por codigo_interno, (2) match numérico sem zeros, (3) match por codigo_barras.
+  const db = await obterDatabase();
+  const mapaQtd = new Map<string, number>(); // keyed by codigo_interno resolvido
+  const codigosDesconhecidos: string[] = [];
+
+  for (const [codigoBruto, qtd] of mapaQtdBruto.entries()) {
+    // (1) match exato
+    let produto = await db.getFirstAsync<{ codigo_interno: string }>(
+      `SELECT codigo_interno FROM produtos WHERE codigo_interno = ? AND ativo = 1 LIMIT 1;`,
+      codigoBruto,
+    );
+
+    // (2) match numérico normalizado — trata zeros à esquerda
+    if (!produto && /^\d+$/.test(codigoBruto)) {
+      const semZeros = String(Number(codigoBruto));
+      produto = await db.getFirstAsync<{ codigo_interno: string }>(
+        `SELECT codigo_interno FROM produtos WHERE codigo_interno = ? AND ativo = 1 LIMIT 1;`,
+        semZeros,
+      );
+      if (!produto) {
+        // tenta com zeros padded
+        const comZeros = codigoBruto.padStart(8, '0');
+        produto = await db.getFirstAsync<{ codigo_interno: string }>(
+          `SELECT codigo_interno FROM produtos WHERE codigo_interno = ? AND ativo = 1 LIMIT 1;`,
+          comZeros,
+        );
+      }
+    }
+
+    // (3) match por codigo_barras
+    if (!produto) {
+      produto = await db.getFirstAsync<{ codigo_interno: string }>(
+        `SELECT codigo_interno FROM produtos WHERE codigo_barras = ? AND ativo = 1 LIMIT 1;`,
+        codigoBruto,
+      );
+    }
+
+    const codigoResolvido = produto?.codigo_interno ?? codigoBruto;
+    if (!produto) codigosDesconhecidos.push(codigoBruto);
+
+    mapaQtd.set(codigoResolvido, (mapaQtd.get(codigoResolvido) ?? 0) + qtd);
+  }
+
+  // Substitui itens anteriores desta conferência.
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM nf_itens WHERE conferencia_id = ?;`, conferenciaId);
+
+    for (const [codigo, qtd] of mapaQtd.entries()) {
+      await db.runAsync(
+        `INSERT INTO nf_itens (conferencia_id, codigo_interno, quantidade_esperada) VALUES (?, ?, ?);`,
+        conferenciaId,
+        codigo,
+        qtd,
+      );
+    }
+  });
+
+  return {
+    carregados: mapaQtd.size,
+    ignorados,
+    codigosDesconhecidos,
+  };
+}
+
+export async function obterNfItens(conferenciaId: number): Promise<NfItem[]> {
+  const db = await obterDatabase();
+
+  const rows = await db.getAllAsync<{ codigo_interno: string; quantidade_esperada: number }>(
+    `SELECT codigo_interno, quantidade_esperada FROM nf_itens WHERE conferencia_id = ? ORDER BY codigo_interno;`,
+    conferenciaId,
+  );
+
+  return rows.map((r) => ({
+    codigoInterno: r.codigo_interno,
+    quantidadeEsperada: r.quantidade_esperada,
+  }));
+}
+
+export async function limparNfItens(conferenciaId: number): Promise<void> {
+  const db = await obterDatabase();
+  await db.runAsync(`DELETE FROM nf_itens WHERE conferencia_id = ?;`, conferenciaId);
+}
+
+export async function temNfCarregada(conferenciaId: number): Promise<boolean> {
+  const db = await obterDatabase();
+  const r = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM nf_itens WHERE conferencia_id = ? LIMIT 1;`,
+    conferenciaId,
+  );
+  return (r?.cnt ?? 0) > 0;
 }

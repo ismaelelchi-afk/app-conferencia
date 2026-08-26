@@ -67,7 +67,7 @@ export default function HomeScreen() {
           >
             <Text style={styles.menuIcon}>🔎</Text>
             <Text style={styles.menuText}>
-              Consultar produto
+              Procurar produto
             </Text>
           </Pressable>
 

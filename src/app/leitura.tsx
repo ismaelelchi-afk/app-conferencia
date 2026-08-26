@@ -26,6 +26,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
 
 import {
   atualizarNomeConferencia,
@@ -35,13 +36,17 @@ import {
   cancelarConferencia,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
+  formatarCodigoInterno,
   formatarNumeroConferencia,
+  importarNfItens,
   obterConfiguracao,
   obterConferencia,
   obterLeiturasConferencia,
+  obterNfItens,
   registrarLeituraConferencia,
   registrarProdutoDesconhecido,
   removerLeituraConferencia,
+  temNfCarregada,
 } from '@/database/database';
 
 import { CORES_STATUS } from '@/constants/cores';
@@ -50,6 +55,7 @@ import { ModalEdicaoItem } from '@/components/ModalEdicaoItem';
 import type {
   DadosProdutoRapido,
   LeituraConferencia,
+  NfItem,
   StatusLeitura,
   TipoProduto,
 } from '@/models/produto';
@@ -84,6 +90,7 @@ export default function LeituraScreen() {
 
   const [processando, setProcessando] =
     useState(false);
+  const processandoRef = useRef(false);
 
   const [carregandoInicial, setCarregandoInicial] =
     useState(true);
@@ -104,7 +111,13 @@ export default function LeituraScreen() {
 
   const [mostrarConfirmacaoCancelar, setMostrarConfirmacaoCancelar] =
     useState(false);
+
+  const [nfCarregada, setNfCarregada] = useState(false);
+  const [nfItens, setNfItens] = useState<NfItem[]>([]);
+  const [importandoNf, setImportandoNf] = useState(false);
+  const [mensagemNf, setMensagemNf] = useState<string | null>(null);
   const [cancelando, setCancelando] = useState(false);
+  const [nfAlerta, setNfAlerta] = useState<{ texto: string; tipo: 'nao_esperado' | 'excedido' } | null>(null);
 
   const [itemEditando, setItemEditando] =
     useState<LeituraConferencia | null>(null);
@@ -155,6 +168,13 @@ export default function LeituraScreen() {
   const feedbackAmareloTimer =
     useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const nfAlertaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Refs para que registrarLeitura sempre leia os valores mais recentes,
+  // mesmo que o React Compiler memoize a função.
+  const nfCarregadaRef = useRef(false);
+  const nfItensRef = useRef<NfItem[]>([]);
+
   const somAzul = useAudioPlayer(require('@/assets/sounds/azul.mp3'));
   const somVermelho = useAudioPlayer(
     require('@/assets/sounds/vermelho.mp3'),
@@ -183,6 +203,7 @@ export default function LeituraScreen() {
       if (azulTimer.current) clearTimeout(azulTimer.current);
       if (leituraManualTimer.current) clearTimeout(leituraManualTimer.current);
       if (feedbackAmareloTimer.current) clearTimeout(feedbackAmareloTimer.current);
+      if (nfAlertaTimer.current) clearTimeout(nfAlertaTimer.current);
     };
   }, []);
 
@@ -196,11 +217,16 @@ export default function LeituraScreen() {
       }
 
       try {
-        const existentes =
-          await obterLeiturasConferencia(conferenciaId);
+        const [existentes, temNf, itensNf] = await Promise.all([
+          obterLeiturasConferencia(conferenciaId),
+          temNfCarregada(conferenciaId),
+          obterNfItens(conferenciaId),
+        ]);
 
         if (ativo) {
           setProdutos(existentes);
+          setNfCarregada(temNf);
+          setNfItens(itensNf);
         }
       } catch (error) {
         console.error(
@@ -220,6 +246,9 @@ export default function LeituraScreen() {
       ativo = false;
     };
   }, [conferenciaId, conferenciaValida]);
+
+  useEffect(() => { nfCarregadaRef.current = nfCarregada; }, [nfCarregada]);
+  useEffect(() => { nfItensRef.current = nfItens; }, [nfItens]);
 
   // Carrega configurações globais e nome da conferência numa única chamada.
   useEffect(() => {
@@ -277,7 +306,7 @@ export default function LeituraScreen() {
   async function registrarLeitura(
     codigoBarras: string,
   ) {
-    if (processando || !conferenciaValida) {
+    if (processandoRef.current || !conferenciaValida) {
       return;
     }
 
@@ -289,6 +318,7 @@ export default function LeituraScreen() {
 
     ultimoCodigoLido.current = codigoBarras;
 
+    processandoRef.current = true;
     setProcessando(true);
 
     try {
@@ -341,7 +371,7 @@ export default function LeituraScreen() {
           primeiraLeitura,
           ultimaLeitura: agora,
           status: statusFinal,
-          statusRevisao: 'pendente',
+          statusRevisao: 'ok',
         };
 
         return [novoItem, ...listaAtual];
@@ -359,6 +389,29 @@ export default function LeituraScreen() {
 
       vibrarSeAtivado();
 
+      // Verificação NF — usa refs para garantir valores atuais mesmo com memoização.
+      const nfItensAtual = nfItensRef.current;
+      if (nfCarregadaRef.current && nfItensAtual.length > 0 && !ehDesconhecido) {
+        const nfItem = nfItensAtual.find((ni) => ni.codigoInterno === produto!.codigoInterno);
+        let alertaNf: { texto: string; tipo: 'nao_esperado' | 'excedido' } | null = null;
+
+        if (!nfItem) {
+          alertaNf = { texto: 'NÃO ESPERADO NA NF', tipo: 'nao_esperado' };
+        } else {
+          // quantidade atual após este scan
+          const qtdAtual = (produtoExistente?.quantidade ?? 0) + 1;
+          if (qtdAtual > nfItem.quantidadeEsperada) {
+            alertaNf = { texto: `EXCEDIDO (esp. ${nfItem.quantidadeEsperada})`, tipo: 'excedido' };
+          }
+        }
+
+        if (alertaNf) {
+          if (nfAlertaTimer.current) clearTimeout(nfAlertaTimer.current);
+          setNfAlerta(alertaNf);
+          nfAlertaTimer.current = setTimeout(() => setNfAlerta(null), 3000);
+        }
+      }
+
       if (azulTimer.current) clearTimeout(azulTimer.current);
       azulTimer.current = setTimeout(() => {
         setLeituraConfirmada(false);
@@ -372,6 +425,7 @@ export default function LeituraScreen() {
       console.error('Erro ao registrar leitura:', error);
       ultimoCodigoLido.current = null;
     } finally {
+      processandoRef.current = false;
       setProcessando(false);
     }
   }
@@ -541,8 +595,16 @@ function abrirEdicao(item: LeituraConferencia) {
                 nome: dados.nome,
                 marca: dados.marca,
                 categoria: dados.categoria,
+                subcategoria: dados.subcategoria,
                 modelo: dados.modelo,
-                descricao: dados.descricao,
+                capacidad: dados.capacidad,
+                tecnologia: dados.tecnologia,
+                ciclo: dados.ciclo,
+                voltaje: dados.voltaje,
+                color: dados.color,
+                peso: dados.peso,
+                dimensiones: dados.dimensiones,
+                link: dados.link,
                 tipoProduto: dados.tipoProduto ?? 'normal',
                 codigoPar: dados.codigoPar,
                 origem: 'manual',
@@ -579,24 +641,34 @@ function abrirEdicao(item: LeituraConferencia) {
   }
 
   async function salvarDadosProduto(dados: {
+    codigoInterno?: string;
     nome: string;
     marca?: string;
     categoria?: string;
+    subcategoria?: string;
     modelo?: string;
-    descricao?: string;
+    capacidad?: string;
+    tecnologia?: string;
+    ciclo?: string;
+    voltaje?: string;
+    color?: string;
+    peso?: string;
+    dimensiones?: string;
+    link?: string;
   }): Promise<string | null> {
     if (!itemEditando) return null;
 
+    const codigoOriginal = itemEditando.produto.codigoInterno;
+    const novoCodigoInterno = dados.codigoInterno?.trim() || codigoOriginal;
+    const produtoAtualizado = { ...itemEditando.produto, ...dados, codigoInterno: novoCodigoInterno };
+
     try {
-      await atualizarProduto(
-        { ...itemEditando.produto, ...dados },
-        itemEditando.produto.codigoInterno,
-      );
+      await atualizarProduto(produtoAtualizado, codigoOriginal);
 
       setProdutos((lista) =>
         lista.map((item) =>
-          item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...item, produto: { ...item.produto, ...dados } }
+          item.produto.codigoInterno === codigoOriginal
+            ? { ...item, produto: produtoAtualizado }
             : item,
         ),
       );
@@ -610,12 +682,14 @@ function abrirEdicao(item: LeituraConferencia) {
   async function handleParear(
     codigoInternoSocio: string,
     codigoPar: string,
+    tipoSocio: TipoProduto,
+    tipoItem: TipoProduto,
   ): Promise<string | null> {
     if (!itemEditando) return null;
 
     try {
       await atualizarProduto(
-        { ...itemEditando.produto, codigoPar },
+        { ...itemEditando.produto, codigoPar, tipoProduto: tipoItem },
         itemEditando.produto.codigoInterno,
       );
 
@@ -623,17 +697,25 @@ function abrirEdicao(item: LeituraConferencia) {
         (it) => it.produto.codigoInterno === codigoInternoSocio,
       );
       if (socio) {
+        const tipoProdutoSocio =
+          socio.produto.tipoProduto === 'normal' ? tipoSocio : socio.produto.tipoProduto;
         await atualizarProduto(
-          { ...socio.produto, codigoPar },
+          { ...socio.produto, codigoPar, tipoProduto: tipoProdutoSocio },
           socio.produto.codigoInterno,
+        );
+        setProdutos((lista) =>
+          lista.map((it) =>
+            it.produto.codigoInterno === codigoInternoSocio
+              ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoProdutoSocio } }
+              : it,
+          ),
         );
       }
 
       setProdutos((lista) =>
         lista.map((it) =>
-          it.produto.codigoInterno === itemEditando.produto.codigoInterno ||
-          it.produto.codigoInterno === codigoInternoSocio
-            ? { ...it, produto: { ...it.produto, codigoPar } }
+          it.produto.codigoInterno === itemEditando.produto.codigoInterno
+            ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoItem } }
             : it,
         ),
       );
@@ -711,6 +793,53 @@ function abrirEdicao(item: LeituraConferencia) {
     }
   }
 
+  async function handleImportarNf() {
+    if (importandoNf || !conferenciaValida) return;
+
+    try {
+      const resultado = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (resultado.canceled || !resultado.assets?.length) return;
+
+      setImportandoNf(true);
+      setMensagemNf(null);
+
+      const arquivo = resultado.assets[0];
+      const response = await fetch(arquivo.uri);
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+      }
+      const base64 = btoa(binary);
+
+      const res = await importarNfItens(conferenciaId, base64);
+      const itensNfAtualizados = await obterNfItens(conferenciaId);
+      setNfCarregada(true);
+      setNfItens(itensNfAtualizados);
+
+      let msg = `NF importada: ${res.carregados} ite${res.carregados !== 1 ? 'ns' : 'm'}`;
+      if (res.ignorados > 0) msg += `, ${res.ignorados} ignorado${res.ignorados !== 1 ? 's' : ''}`;
+      if (res.codigosDesconhecidos.length > 0) {
+        msg += `. Códigos não encontrados: ${res.codigosDesconhecidos.slice(0, 3).join(', ')}${res.codigosDesconhecidos.length > 3 ? '...' : ''}`;
+      }
+      setMensagemNf(msg);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Erro ao importar NF.';
+      setMensagemNf(msg);
+    } finally {
+      setImportandoNf(false);
+    }
+  }
+
   function handleFinalizar() {
     if (!conferenciaValida) {
       return;
@@ -763,6 +892,14 @@ function abrirEdicao(item: LeituraConferencia) {
 
     return { grupos, individuais };
   }, [produtos]);
+
+  const nfFaltantes = useMemo(() => {
+    if (!nfCarregada || nfItens.length === 0) return 0;
+    return nfItens.filter((ni) => {
+      const item = produtos.find((p) => p.produto.codigoInterno === ni.codigoInterno);
+      return (item?.quantidade ?? 0) < ni.quantidadeEsperada;
+    }).length;
+  }, [nfItens, produtos, nfCarregada]);
 
   if (!conferenciaValida) {
     return (
@@ -884,7 +1021,19 @@ return (
           </Text>
         </Pressable>
 
-        <View style={styles.headerSpacer} />
+        <Pressable
+          style={[styles.headerNfButton, importandoNf && styles.nfButtonDisabled]}
+          onPress={() => { void handleImportarNf(); }}
+          disabled={importandoNf}
+        >
+          {importandoNf ? (
+            <ActivityIndicator size="small" color="#175CD3" />
+          ) : (
+            <Text style={styles.headerNfButtonText}>
+              {nfCarregada ? '📋' : '📋 NF'}
+            </Text>
+          )}
+        </Pressable>
       </View>
 
       <View style={styles.cameraContainer}>
@@ -959,6 +1108,15 @@ return (
         )
       )}
 
+      {nfAlerta && (
+        <View style={[
+          styles.nfAlertaBox,
+          nfAlerta.tipo === 'excedido' ? styles.nfAlertaExcedido : styles.nfAlertaNaoEsperado,
+        ]}>
+          <Text style={styles.nfAlertaTexto}>{nfAlerta.texto}</Text>
+        </View>
+      )}
+
       {processando && (
         <View style={styles.statusBox}>
           <ActivityIndicator size="small" />
@@ -968,6 +1126,16 @@ return (
         </View>
       )}
 
+
+      {nfCarregada && (
+        <View style={[styles.nfBar, nfFaltantes === 0 ? styles.nfBarOk : styles.nfBarPendente]}>
+          <Text style={styles.nfBarTexto}>
+            {nfFaltantes === 0
+              ? '✓ NF conferida — tudo lido'
+              : `NF carregada · ${nfFaltantes} faltante${nfFaltantes !== 1 ? 's' : ''}`}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.listContainer}>
         <View style={styles.listHeader}>
@@ -1014,14 +1182,14 @@ return (
                       const cor = CORES_STATUS[item.status];
                       return (
                         <Pressable
-                          key={item.produto.codigoInterno}
+                          key={formatarCodigoInterno(item.produto.codigoInterno)}
                           style={[styles.productCard, styles.productCardPar, { borderColor: cor.borda, backgroundColor: cor.fundo }]}
                           onPress={() => abrirEdicao(item)}
                         >
                           <View style={styles.productInfo}>
                             <View style={styles.productTopRow}>
                               <Text style={[styles.internalCodeLarge, { color: cor.texto }]}>
-                                {item.produto.codigoInterno}
+                                {formatarCodigoInterno(item.produto.codigoInterno)}
                               </Text>
                               <View style={[styles.badgeSmall, { backgroundColor: cor.borda }]}>
                                 <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
@@ -1049,7 +1217,7 @@ return (
                 const cor = CORES_STATUS[item.status];
                 return (
                   <Pressable
-                    key={item.produto.codigoInterno}
+                    key={formatarCodigoInterno(item.produto.codigoInterno)}
                     style={[
                       styles.productCard,
                       { borderColor: cor.borda, backgroundColor: cor.fundo },
@@ -1064,7 +1232,7 @@ return (
                             { color: cor.texto },
                           ]}
                         >
-                          {item.produto.codigoInterno}
+                          {formatarCodigoInterno(item.produto.codigoInterno)}
                         </Text>
 
                         <View
@@ -1086,7 +1254,13 @@ return (
                         {item.produto.nome}
                       </Text>
 
-                      {item.produto.tipoProduto !== 'normal' ? (
+                      {item.produto.modelo ? (
+                        <Text style={styles.productModelo} numberOfLines={1}>
+                          {item.produto.modelo}
+                        </Text>
+                      ) : null}
+
+                      {item.produto.tipoProduto !== 'normal' && (
                         <View style={styles.acPartesRow}>
                           <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
                             {item.produto.tipoProduto === 'evaporadora'
@@ -1094,11 +1268,11 @@ return (
                               : '❄ Condensadora'}
                           </Text>
                         </View>
-                      ) : (
-                        <Text style={styles.productBarcode}>
-                          {item.produto.codigoBarras || 'sem código de barras'}
-                        </Text>
                       )}
+
+                      <Text style={styles.productBarcode}>
+                        {item.produto.codigoBarras || 'sem código de barras'}
+                      </Text>
                     </View>
 
                     <View style={styles.quantityBox}>
@@ -1124,6 +1298,11 @@ return (
         <Text style={styles.finishText}>FINALIZAR CONFERÊNCIA</Text>
       </Pressable>
 
+      {mensagemNf && (
+        <Pressable onPress={() => setMensagemNf(null)}>
+          <Text style={styles.nfMensagem}>{mensagemNf}</Text>
+        </Pressable>
+      )}
 
       <Pressable
         style={styles.cancelConferenciaButton}
@@ -1353,8 +1532,19 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
-  headerSpacer: {
+  headerNfButton: {
     width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#EFF8FF',
+  },
+
+  headerNfButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#175CD3',
   },
 
   cameraContainer: {
@@ -1634,6 +1824,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#18212F',
+  },
+
+  productModelo: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#667085',
+    fontStyle: 'italic',
   },
 
   productBarcode: {
@@ -2077,6 +2274,39 @@ const styles = StyleSheet.create({
     color: '#667085',
   },
 
+  nfButton: {
+    marginTop: 6,
+    marginHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#B2D6FB',
+    backgroundColor: '#EAF4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+
+  nfButtonDisabled: { opacity: 0.6 },
+
+  nfButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#175CD3',
+  },
+
+  nfMensagem: {
+    marginTop: 6,
+    marginHorizontal: 18,
+    fontSize: 11,
+    color: '#344054',
+    backgroundColor: '#F2F4F7',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    lineHeight: 16,
+  },
+
   cancelConferenciaButton: {
     marginTop: 4,
     marginHorizontal: 18,
@@ -2138,6 +2368,45 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1,
     color: '#5C4600',
+  },
+
+  nfBar: {
+    marginHorizontal: 16,
+    marginBottom: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  nfBarOk: {
+    backgroundColor: '#ECFDF3',
+  },
+  nfBarPendente: {
+    backgroundColor: '#FFFAEB',
+  },
+  nfBarTexto: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#344054',
+  },
+  nfAlertaBox: {
+    marginHorizontal: 16,
+    marginBottom: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  nfAlertaNaoEsperado: {
+    backgroundColor: '#FFF3CD',
+  },
+  nfAlertaExcedido: {
+    backgroundColor: '#FFE4E1',
+  },
+  nfAlertaTexto: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#344054',
   },
 });
 
