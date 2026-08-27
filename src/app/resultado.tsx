@@ -1,3 +1,4 @@
+import * as DocumentPicker from 'expo-document-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -17,6 +18,7 @@ import {
   editarQuantidadeLeitura,
   formatarCodigoInterno,
   finalizarConferencia,
+  importarNfItens,
   marcarStatusRevisao,
   obterConferencia,
   obterLeiturasConferencia,
@@ -64,6 +66,8 @@ export default function ResultadoScreen() {
   const [somenteDivergencias, setSomenteDivergencias] = useState(false);
 
   const [nfItens, setNfItens] = useState<NfItem[]>([]);
+  const [importandoNf, setImportandoNf] = useState(false);
+  const [mensagemNf, setMensagemNf] = useState<string | null>(null);
   const [secaoAberta, setSecaoAberta] = useState<Record<string, boolean>>({
     faltantes: true,
     sobrantes: true,
@@ -195,6 +199,49 @@ export default function ResultadoScreen() {
     const y = itemYPositions.current[primeiro.produto.codigoInterno];
     if (y !== undefined) {
       scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
+    }
+  }
+
+  async function handleImportarNf() {
+    if (!conferenciaValida) return;
+    try {
+      const resultado = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+        ],
+        copyToCacheDirectory: true,
+      });
+      if (resultado.canceled || !resultado.assets?.length) return;
+
+      setImportandoNf(true);
+      setMensagemNf(null);
+
+      const arquivo = resultado.assets[0];
+      const response = await fetch(arquivo.uri);
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+      }
+      const base64 = btoa(binary);
+
+      const res = await importarNfItens(conferenciaId, base64);
+      const itensAtualizados = await obterNfItens(conferenciaId);
+      setNfItens(itensAtualizados);
+
+      let msg = `NF importada: ${res.carregados} ite${res.carregados !== 1 ? 'ns' : 'm'}`;
+      if (res.ignorados > 0) msg += `, ${res.ignorados} ignorado${res.ignorados !== 1 ? 's' : ''}`;
+      if (res.codigosDesconhecidos.length > 0) {
+        msg += `. Não encontrados: ${res.codigosDesconhecidos.slice(0, 3).join(', ')}${res.codigosDesconhecidos.length > 3 ? '...' : ''}`;
+      }
+      setMensagemNf(msg);
+    } catch (error) {
+      setMensagemNf(error instanceof Error ? error.message : 'Erro ao importar NF.');
+    } finally {
+      setImportandoNf(false);
     }
   }
 
@@ -601,8 +648,26 @@ export default function ResultadoScreen() {
                 : 'Finalizada'}
             </Text>
           </View>
-          <View style={styles.headerSpace} />
+          <Pressable
+            style={[styles.headerNfButton, importandoNf && { opacity: 0.5 }]}
+            onPress={() => { void handleImportarNf(); }}
+            disabled={importandoNf}
+          >
+            {importandoNf ? (
+              <ActivityIndicator size="small" color="#175CD3" />
+            ) : (
+              <Text style={styles.headerNfButtonText}>
+                {nfItens.length > 0 ? '📋' : '📋 NF'}
+              </Text>
+            )}
+          </Pressable>
         </View>
+
+        {mensagemNf && (
+          <Pressable onPress={() => setMensagemNf(null)}>
+            <Text style={styles.nfMensagemImport}>{mensagemNf}</Text>
+          </Pressable>
+        )}
 
         <ScrollView
           ref={scrollRef}
@@ -1159,6 +1224,31 @@ const styles = StyleSheet.create({
   headerSubtitle: { marginTop: 2, fontSize: 11, color: '#667085' },
 
   headerSpace: { width: 44 },
+
+  headerNfButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#EFF8FF',
+  },
+
+  headerNfButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#175CD3',
+  },
+
+  nfMensagemImport: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    fontSize: 12,
+    color: '#344054',
+    backgroundColor: '#F2F4F7',
+    borderRadius: 6,
+    padding: 8,
+  },
 
   summaryCard: {
     marginTop: 12, padding: 20, borderRadius: 18,
