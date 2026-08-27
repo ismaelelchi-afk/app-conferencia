@@ -63,21 +63,14 @@ export default function ResultadoScreen() {
   const [erro, setErro] = useState<string | null>(null);
   const [finalizando, setFinalizando] = useState(false);
   const [mostrarConfirmacaoFinalizar, setMostrarConfirmacaoFinalizar] = useState(false);
-  const [somenteDivergencias, setSomenteDivergencias] = useState(false);
 
   const [nfItens, setNfItens] = useState<NfItem[]>([]);
   const [importandoNf, setImportandoNf] = useState(false);
   const [mensagemNf, setMensagemNf] = useState<string | null>(null);
-  const [secaoAberta, setSecaoAberta] = useState<Record<string, boolean>>({
-    faltantes: true,
-    sobrantes: true,
-    naoEsperados: true,
-  });
 
   const [itemEditando, setItemEditando] = useState<LeituraConferencia | null>(null);
 
   const scrollRef = useRef<ScrollView>(null);
-  const itemYPositions = useRef<Record<string, number>>({});
 
   const modoRevisao = conferencia?.status === 'em_andamento';
 
@@ -192,15 +185,6 @@ export default function ResultadoScreen() {
   // ==========================================================
   // EDIÇÃO DE ITEM
   // ==========================================================
-
-  function scrollParaDivergencias() {
-    const primeiro = leituras.find((l) => l.statusRevisao === 'divergencia');
-    if (!primeiro) return;
-    const y = itemYPositions.current[primeiro.produto.codigoInterno];
-    if (y !== undefined) {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: true });
-    }
-  }
 
   async function handleImportarNf() {
     if (!conferenciaValida) return;
@@ -555,7 +539,6 @@ export default function ResultadoScreen() {
     return compararConferencia(lidos, nfItens);
   }, [leituras, nfItens]);
 
-  // Nomes de produtos para itens da NF não presentes nas leituras (faltantes com lido=0)
   const nomesNf = useMemo(() => {
     const mapa = new Map<string, string>();
     for (const l of leituras) {
@@ -563,23 +546,6 @@ export default function ResultadoScreen() {
     }
     return mapa;
   }, [leituras]);
-
-  // Lista filtrada para el toggle "somente divergencias"
-  const individuaisVisiveis = useMemo(() =>
-    somenteDivergencias
-      ? itensOrganizados.individuais.filter((i) => i.statusRevisao === 'divergencia')
-      : itensOrganizados.individuais,
-  [somenteDivergencias, itensOrganizados.individuais]);
-
-  const gruposVisiveis = useMemo(() => {
-    if (!somenteDivergencias) return itensOrganizados.grupos;
-    const filtrado: Record<string, LeituraConferencia[]> = {};
-    for (const [cod, items] of Object.entries(itensOrganizados.grupos)) {
-      const temDiv = items.some((i) => i.statusRevisao === 'divergencia');
-      if (temDiv) filtrado[cod] = items;
-    }
-    return filtrado;
-  }, [somenteDivergencias, itensOrganizados.grupos]);
 
   // Divergencias para el modal de confirmación (máx 5)
   const divergenciasModal = useMemo(
@@ -731,173 +697,98 @@ export default function ResultadoScreen() {
           {/* Barra de divergencias (somente modo revisão) */}
           {modoRevisao && resumoRevisao && (
             <View style={styles.divBar}>
-              <View style={styles.divBarTexto}>
-                {totalDivergencias === 0 ? (
-                  <Text style={styles.divBarZero}>✓ Sem divergências</Text>
-                ) : (
-                  <Text style={styles.divBarAlerta}>
-                    ⚠ {totalDivergencias} divergência{totalDivergencias !== 1 ? 's' : ''} de {totalItens} ite{totalItens !== 1 ? 'ns' : 'm'}
-                  </Text>
-                )}
-                {(resumoRevisao.pendente ?? 0) > 0 && (
-                  <Text style={styles.divBarPendente}>
-                    {resumoRevisao.pendente} sem revisão (legado)
-                  </Text>
-                )}
-              </View>
-              {totalDivergencias > 0 && (
-                <Pressable
-                  style={[styles.filtroPill, somenteDivergencias && styles.filtroPillAtivo]}
-                  onPress={() => {
-                    setSomenteDivergencias((v) => !v);
-                    if (!somenteDivergencias) scrollParaDivergencias();
-                  }}
-                >
-                  <Text style={[styles.filtroPillTexto, somenteDivergencias && styles.filtroPillTextoAtivo]}>
-                    {somenteDivergencias ? 'Ver todos' : 'Ver divergências'}
-                  </Text>
-                </Pressable>
+              {totalDivergencias === 0 ? (
+                <Text style={styles.divBarZero}>✓ Sem divergências</Text>
+              ) : (
+                <Text style={styles.divBarAlerta}>
+                  ⚠ {totalDivergencias} divergência{totalDivergencias !== 1 ? 's' : ''}
+                </Text>
               )}
             </View>
           )}
 
-          {/* Instrução */}
-          <View style={styles.instructionCard}>
-            <Text style={styles.instructionIcon}>📄</Text>
-            <View style={styles.instructionInfo}>
-              <Text style={styles.instructionTitle}>
-                {modoRevisao ? 'Compare com a nota fiscal' : 'Agora confira com a nota fiscal'}
-              </Text>
-              <Text style={styles.instructionText}>
-                {modoRevisao
-                  ? 'Toque em "✗ Divergência" para marcar um problema. Toque novamente para desfazer.'
-                  : 'Compare os produtos lidos com a nota fiscal e registre qualquer divergência.'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Comparação NF — só aparece quando há NF carregada */}
+          {/* Batimento NF */}
           {comparacaoNf && (
             <View style={styles.nfContainer}>
-              <Text style={styles.nfTitulo}>COMPARAÇÃO COM A NOTA FISCAL</Text>
+              <Text style={styles.nfTitulo}>BATIMENTO COM A NF</Text>
 
-              {/* Estado perfeito */}
               {comparacaoNf.faltantes.length === 0 &&
                comparacaoNf.sobrantes.length === 0 &&
-               comparacaoNf.naoEsperados.length === 0 && (
+               comparacaoNf.naoEsperados.length === 0 ? (
                 <View style={styles.nfOkBox}>
                   <Text style={styles.nfOkIcon}>✓</Text>
-                  <Text style={styles.nfOkTexto}>Conferência bate com a NF</Text>
+                  <Text style={styles.nfOkTexto}>
+                    Bate — {comparacaoNf.coincidentes} ite{comparacaoNf.coincidentes !== 1 ? 'ns' : 'm'} conferidos
+                  </Text>
                 </View>
-              )}
+              ) : (
+                <>
+                  {comparacaoNf.faltantes.length > 0 && (
+                    <View style={styles.nfSecao}>
+                      <View style={styles.nfSecaoHeader}>
+                        <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeFaltante]}>
+                          <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.faltantes.length}</Text>
+                        </View>
+                        <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloFaltante]}>Faltantes</Text>
+                      </View>
+                      {comparacaoNf.faltantes.map((item) => (
+                        <View key={item.codigoInterno} style={styles.nfLinha}>
+                          <View style={styles.nfLinhaInfo}>
+                            <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
+                            <Text style={styles.nfLinhaNome} numberOfLines={1}>{nomesNf.get(item.codigoInterno) ?? '—'}</Text>
+                          </View>
+                          <Text style={styles.nfLinhaQtdTexto}>
+                            <Text style={styles.nfLinhaQtdNeg}>{item.lido}</Text>
+                            {` / ${item.esperado} esp`}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
 
-              {/* Linha de coincidentes */}
-              {comparacaoNf.coincidentes > 0 && (
-                <Text style={styles.nfCoincidentes}>
-                  {comparacaoNf.coincidentes} ite{comparacaoNf.coincidentes !== 1 ? 'ns' : 'm'} conferido{comparacaoNf.coincidentes !== 1 ? 's' : ''} OK
-                </Text>
-              )}
+                  {comparacaoNf.sobrantes.length > 0 && (
+                    <View style={styles.nfSecao}>
+                      <View style={styles.nfSecaoHeader}>
+                        <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeSobrante]}>
+                          <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.sobrantes.length}</Text>
+                        </View>
+                        <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloSobrante]}>Sobrantes</Text>
+                      </View>
+                      {comparacaoNf.sobrantes.map((item) => (
+                        <View key={item.codigoInterno} style={styles.nfLinha}>
+                          <View style={styles.nfLinhaInfo}>
+                            <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
+                            <Text style={styles.nfLinhaNome} numberOfLines={1}>{nomesNf.get(item.codigoInterno) ?? '—'}</Text>
+                          </View>
+                          <Text style={styles.nfLinhaQtdTexto}>
+                            <Text style={styles.nfLinhaQtdPos}>{item.lido}</Text>
+                            {` / ${item.esperado} esp`}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
 
-              {/* Faltantes */}
-              {comparacaoNf.faltantes.length > 0 && (
-                <View style={styles.nfSecao}>
-                  <Pressable
-                    style={styles.nfSecaoHeader}
-                    onPress={() => setSecaoAberta((s) => ({ ...s, faltantes: !s.faltantes }))}
-                  >
-                    <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeFaltante]}>
-                      <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.faltantes.length}</Text>
-                    </View>
-                    <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloFaltante]}>
-                      Faltantes
-                    </Text>
-                    <Text style={styles.nfSecaoChevron}>{secaoAberta.faltantes ? '▲' : '▼'}</Text>
-                  </Pressable>
-                  {secaoAberta.faltantes && comparacaoNf.faltantes.map((item) => (
-                    <View key={item.codigoInterno} style={styles.nfLinha}>
-                      <View style={styles.nfLinhaInfo}>
-                        <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
-                        <Text style={styles.nfLinhaNome} numberOfLines={1}>
-                          {nomesNf.get(item.codigoInterno) ?? '—'}
-                        </Text>
+                  {comparacaoNf.naoEsperados.length > 0 && (
+                    <View style={styles.nfSecao}>
+                      <View style={styles.nfSecaoHeader}>
+                        <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeNaoEsp]}>
+                          <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.naoEsperados.length}</Text>
+                        </View>
+                        <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloNaoEsp]}>Não esperados</Text>
                       </View>
-                      <View style={styles.nfLinhaQtd}>
-                        <Text style={styles.nfLinhaEsperado}>esp. {item.esperado}</Text>
-                        <Text style={styles.nfLinhaLido}>lido {item.lido}</Text>
-                        <Text style={[styles.nfLinhaDiff, styles.nfLinhaDiffNeg]}>
-                          {item.lido - item.esperado}
-                        </Text>
-                      </View>
+                      {comparacaoNf.naoEsperados.map((item) => (
+                        <View key={item.codigoInterno} style={styles.nfLinha}>
+                          <View style={styles.nfLinhaInfo}>
+                            <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
+                            <Text style={styles.nfLinhaNome} numberOfLines={1}>{nomesNf.get(item.codigoInterno) ?? '—'}</Text>
+                          </View>
+                          <Text style={[styles.nfLinhaQtdTexto, styles.nfLinhaQtdNaoEsp]}>lido {item.lido}</Text>
+                        </View>
+                      ))}
                     </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Sobrantes */}
-              {comparacaoNf.sobrantes.length > 0 && (
-                <View style={styles.nfSecao}>
-                  <Pressable
-                    style={styles.nfSecaoHeader}
-                    onPress={() => setSecaoAberta((s) => ({ ...s, sobrantes: !s.sobrantes }))}
-                  >
-                    <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeSobrante]}>
-                      <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.sobrantes.length}</Text>
-                    </View>
-                    <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloSobrante]}>
-                      Sobrantes
-                    </Text>
-                    <Text style={styles.nfSecaoChevron}>{secaoAberta.sobrantes ? '▲' : '▼'}</Text>
-                  </Pressable>
-                  {secaoAberta.sobrantes && comparacaoNf.sobrantes.map((item) => (
-                    <View key={item.codigoInterno} style={styles.nfLinha}>
-                      <View style={styles.nfLinhaInfo}>
-                        <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
-                        <Text style={styles.nfLinhaNome} numberOfLines={1}>
-                          {nomesNf.get(item.codigoInterno) ?? '—'}
-                        </Text>
-                      </View>
-                      <View style={styles.nfLinhaQtd}>
-                        <Text style={styles.nfLinhaEsperado}>esp. {item.esperado}</Text>
-                        <Text style={styles.nfLinhaLido}>lido {item.lido}</Text>
-                        <Text style={[styles.nfLinhaDiff, styles.nfLinhaDiffPos]}>
-                          +{item.lido - item.esperado}
-                        </Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Não esperados */}
-              {comparacaoNf.naoEsperados.length > 0 && (
-                <View style={styles.nfSecao}>
-                  <Pressable
-                    style={styles.nfSecaoHeader}
-                    onPress={() => setSecaoAberta((s) => ({ ...s, naoEsperados: !s.naoEsperados }))}
-                  >
-                    <View style={[styles.nfSecaoBadge, styles.nfSecaoBadgeNaoEsp]}>
-                      <Text style={styles.nfSecaoBadgeText}>{comparacaoNf.naoEsperados.length}</Text>
-                    </View>
-                    <Text style={[styles.nfSecaoTitulo, styles.nfSecaoTituloNaoEsp]}>
-                      Não esperados
-                    </Text>
-                    <Text style={styles.nfSecaoChevron}>{secaoAberta.naoEsperados ? '▲' : '▼'}</Text>
-                  </Pressable>
-                  {secaoAberta.naoEsperados && comparacaoNf.naoEsperados.map((item) => (
-                    <View key={item.codigoInterno} style={styles.nfLinha}>
-                      <View style={styles.nfLinhaInfo}>
-                        <Text style={styles.nfLinhaCodigo}>{formatarCodigoInterno(item.codigoInterno)}</Text>
-                        <Text style={styles.nfLinhaNome} numberOfLines={1}>
-                          {nomesNf.get(item.codigoInterno) ?? '—'}
-                        </Text>
-                      </View>
-                      <View style={styles.nfLinhaQtd}>
-                        <Text style={styles.nfLinhaLido}>lido {item.lido}</Text>
-                        <Text style={[styles.nfLinhaDiff, styles.nfLinhaDiffNaoEsp]}>?</Text>
-                      </View>
-                    </View>
-                  ))}
-                </View>
+                  )}
+                </>
               )}
             </View>
           )}
@@ -912,7 +803,7 @@ export default function ResultadoScreen() {
           ) : (
             <>
               {/* Pares agrupados */}
-              {Object.entries(gruposVisiveis).map(([codigoPar, items]) => {
+              {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
                 const ambosPresentes =
                   items.some((i) => i.produto.tipoProduto === 'evaporadora') &&
                   items.some((i) => i.produto.tipoProduto === 'condensadora') &&
@@ -937,10 +828,6 @@ export default function ResultadoScreen() {
                       return (
                         <View
                           key={item.produto.codigoInterno}
-                          onLayout={(e) => {
-                            itemYPositions.current[item.produto.codigoInterno] =
-                              e.nativeEvent.layout.y;
-                          }}
                           style={[
                             styles.productCard,
                             styles.productCardPar,
@@ -997,17 +884,13 @@ export default function ResultadoScreen() {
               })}
 
               {/* Individuais */}
-              {individuaisVisiveis.map((item) => {
+              {itensOrganizados.individuais.map((item) => {
                 const cor = CORES_STATUS[item.status];
                 const eDiv = item.statusRevisao === 'divergencia';
                 const eLegado = item.statusRevisao === 'pendente';
                 return (
                   <View
                     key={item.produto.codigoInterno}
-                    onLayout={(e) => {
-                      itemYPositions.current[item.produto.codigoInterno] =
-                        e.nativeEvent.layout.y;
-                    }}
                     style={[
                       styles.productCard,
                       { borderColor: eDiv ? '#F04438' : cor.borda, backgroundColor: eDiv ? '#FFF1F0' : cor.fundo },
@@ -1285,9 +1168,6 @@ const styles = StyleSheet.create({
   // Barra de divergencias
   divBar: {
     marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 14,
@@ -1296,38 +1176,9 @@ const styles = StyleSheet.create({
     borderColor: '#E4E7EC',
   },
 
-  divBarTexto: { flex: 1, gap: 2 },
-
   divBarZero: { fontSize: 13, fontWeight: '700', color: '#12B76A' },
 
   divBarAlerta: { fontSize: 13, fontWeight: '700', color: '#B54708' },
-
-  divBarPendente: { fontSize: 11, color: '#98A2B3' },
-
-  filtroPill: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
-    borderWidth: 1, borderColor: '#D0D5DD', backgroundColor: '#F9FAFB',
-    marginLeft: 10,
-  },
-
-  filtroPillAtivo: { backgroundColor: '#F04438', borderColor: '#F04438' },
-
-  filtroPillTexto: { fontSize: 12, fontWeight: '700', color: '#344054' },
-
-  filtroPillTextoAtivo: { color: '#FFFFFF' },
-
-  instructionCard: {
-    marginTop: 12, padding: 16, borderRadius: 16,
-    backgroundColor: '#EFF8FF', flexDirection: 'row',
-  },
-
-  instructionIcon: { fontSize: 25, marginRight: 12 },
-
-  instructionInfo: { flex: 1 },
-
-  instructionTitle: { fontSize: 14, fontWeight: '800', color: '#175CD3' },
-
-  instructionText: { marginTop: 4, fontSize: 12, lineHeight: 18, color: '#344054' },
 
   sectionTitle: {
     marginTop: 20, marginBottom: 8, fontSize: 13, fontWeight: '800', color: '#667085',
@@ -1558,13 +1409,6 @@ const styles = StyleSheet.create({
 
   nfOkTexto: { fontSize: 13, fontWeight: '700', color: '#027A48' },
 
-  nfCoincidentes: {
-    marginHorizontal: 14,
-    marginBottom: 8,
-    fontSize: 12,
-    color: '#667085',
-  },
-
   nfSecao: {
     borderTopWidth: 1,
     borderTopColor: '#F2F4F7',
@@ -1599,8 +1443,6 @@ const styles = StyleSheet.create({
   nfSecaoTituloSobrante: { color: '#B54708' },
   nfSecaoTituloNaoEsp:   { color: '#5925DC' },
 
-  nfSecaoChevron: { fontSize: 10, color: '#98A2B3' },
-
   nfLinha: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1617,18 +1459,11 @@ const styles = StyleSheet.create({
 
   nfLinhaNome: { fontSize: 11, color: '#667085', marginTop: 1 },
 
-  nfLinhaQtd: {
-    alignItems: 'flex-end',
-    gap: 2,
-  },
+  nfLinhaQtdTexto: { fontSize: 12, fontWeight: '600', color: '#344054' },
 
-  nfLinhaEsperado: { fontSize: 10, color: '#98A2B3' },
+  nfLinhaQtdNeg: { color: '#B42318', fontWeight: '800' },
 
-  nfLinhaLido: { fontSize: 10, color: '#344054', fontWeight: '600' },
+  nfLinhaQtdPos: { color: '#B54708', fontWeight: '800' },
 
-  nfLinhaDiff: { fontSize: 12, fontWeight: '800', minWidth: 30, textAlign: 'right' },
-
-  nfLinhaDiffNeg:   { color: '#B42318' },
-  nfLinhaDiffPos:   { color: '#B54708' },
-  nfLinhaDiffNaoEsp: { color: '#5925DC' },
+  nfLinhaQtdNaoEsp: { color: '#5925DC', fontWeight: '700' },
 });
