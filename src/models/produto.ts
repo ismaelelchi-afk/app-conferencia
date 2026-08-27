@@ -9,12 +9,15 @@ export type TipoProduto = 'normal' | 'evaporadora' | 'condensadora';
 export type Produto = {
   codigoInterno: string;
   codigoBarras: string;
+  codigoBarrasCond?: string;
   codigoPar?: string;
   nome: string;
   marca?: string;
   categoria?: string;
   subcategoria?: string;
   modelo?: string;
+  modeloEvaporadora?: string;
+  modeloCondensadora?: string;
   capacidad?: string;
   tecnologia?: string;
   ciclo?: string;
@@ -22,12 +25,16 @@ export type Produto = {
   color?: string;
   peso?: string;
   dimensiones?: string;
-  especificacoes_resumo?: string; // computed from fields above
+  especificacoes_resumo?: string;
   link?: string;
   ativo: boolean;
   origem: OrigemProduto;
   tipoProduto: TipoProduto;
 };
+
+export type ResultadoBuscaIdentificador =
+  | { tipo: 'encontrado'; produto: Produto; via: string }
+  | { tipo: 'multiplos'; produtos: Produto[] };
 
 export type ResumoConferencia = {
   produtosLidos: number;

@@ -32,7 +32,7 @@ import {
   atualizarNomeConferencia,
   atualizarProduto,
   atualizarStatusLeitura,
-  buscarPorCodigoBarras,
+  buscarPorIdentificador,
   cancelarConferencia,
   completarProdutoDesconhecido,
   editarQuantidadeLeitura,
@@ -324,7 +324,10 @@ export default function LeituraScreen() {
     try {
       const agora = new Date().toISOString();
 
-      let produto = await buscarPorCodigoBarras(codigoBarras);
+      const resultado = await buscarPorIdentificador(codigoBarras);
+      let produto = resultado?.tipo === 'encontrado' ? resultado.produto
+                  : resultado?.tipo === 'multiplos'  ? resultado.produtos[0]
+                  : undefined;
       let statusNovaLeitura: StatusLeitura = 'normal';
 
       if (!produto) {

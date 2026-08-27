@@ -13,6 +13,7 @@ import type {
   NfItem,
   Produto,
   ProdutoImportacao,
+  ResultadoBuscaIdentificador,
   ResumoConferencia,
   ResumoRevisao,
   StatusConferencia,
@@ -253,6 +254,20 @@ export async function inicializarDatabase(): Promise<void> {
   await adicionarColunaSe('peso');
   await adicionarColunaSe('dimensiones');
   await adicionarColunaSe('link');
+  await adicionarColunaSe('modelo_evaporadora');
+  await adicionarColunaSe('modelo_condensadora');
+
+  // Índices para busca por identificador (modelo, barras_cond).
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_produtos_modelo
+      ON produtos (modelo) WHERE modelo IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_produtos_modelo_eva
+      ON produtos (modelo_evaporadora) WHERE modelo_evaporadora IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_produtos_modelo_cond
+      ON produtos (modelo_condensadora) WHERE modelo_condensadora IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_produtos_barras_cond
+      ON produtos (codigo_barras_cond) WHERE codigo_barras_cond IS NOT NULL;
+  `);
 
   // ----------------------------------------------------------
   // CONFIGURAÇÕES (chave/valor)
@@ -321,12 +336,15 @@ export async function salvarConfiguracao(
 type ProdutoSQLite = {
   codigo_interno: string;
   codigo_barras: string | null;
+  codigo_barras_cond: string | null;
   codigo_par: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
   subcategoria: string | null;
   modelo: string | null;
+  modelo_evaporadora: string | null;
+  modelo_condensadora: string | null;
   capacidad: string | null;
   tecnologia: string | null;
   ciclo: string | null;
@@ -363,12 +381,15 @@ function converterProduto(produto: ProdutoSQLite): Produto {
   return {
     codigoInterno: produto.codigo_interno,
     codigoBarras: produto.codigo_barras ?? '',
+    codigoBarrasCond: produto.codigo_barras_cond ?? undefined,
     codigoPar: produto.codigo_par ?? undefined,
     nome: produto.nome,
     marca: produto.marca ?? undefined,
     categoria: produto.categoria ?? undefined,
     subcategoria: produto.subcategoria ?? undefined,
     modelo: produto.modelo ?? undefined,
+    modeloEvaporadora: produto.modelo_evaporadora ?? undefined,
+    modeloCondensadora: produto.modelo_condensadora ?? undefined,
     capacidad: produto.capacidad ?? undefined,
     tecnologia: produto.tecnologia ?? undefined,
     ciclo: produto.ciclo ?? undefined,
@@ -465,6 +486,45 @@ export async function buscarPorCodigoBarras(
   }
 
   return converterProduto(resultado);
+}
+
+// ============================================================
+// BUSCAR POR IDENTIFICADOR — modelo, barras_cond ou barras
+// Busca em todas as colunas de identificação, na ordem definida.
+// Retorna 'encontrado' (produto único), 'multiplos' (ambiguidade)
+// ou undefined (não encontrado).
+// ============================================================
+
+const COLUNAS_BUSCA: Array<{ coluna: string; via: string }> = [
+  { coluna: 'codigo_barras',      via: 'codigo_barras'      },
+  { coluna: 'codigo_barras_cond', via: 'codigo_barras_cond' },
+  { coluna: 'modelo',             via: 'modelo'             },
+  { coluna: 'modelo_evaporadora', via: 'modelo_evaporadora' },
+  { coluna: 'modelo_condensadora', via: 'modelo_condensadora' },
+];
+
+export async function buscarPorIdentificador(
+  valor: string,
+): Promise<ResultadoBuscaIdentificador | undefined> {
+  const v = valor.trim();
+  if (!v) return undefined;
+
+  const db = await obterDatabase();
+
+  for (const { coluna, via } of COLUNAS_BUSCA) {
+    const resultados = await db.getAllAsync<ProdutoSQLite>(
+      `SELECT * FROM produtos WHERE ${coluna} = ? AND ativo = 1 LIMIT 2;`,
+      v,
+    );
+    if (resultados.length === 1) {
+      return { tipo: 'encontrado', produto: converterProduto(resultados[0]), via };
+    }
+    if (resultados.length > 1) {
+      return { tipo: 'multiplos', produtos: resultados.map(converterProduto) };
+    }
+  }
+
+  return undefined;
 }
 
 // ============================================================
@@ -695,7 +755,8 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
   if (!sheetName) throw new Error('Arquivo Excel vazio.');
 
   const sheet = workbook.Sheets[sheetName];
-  const linhas = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+  // raw: false preserva strings formatadas (zeros iniciais, alfanuméricos, guiones).
+  const linhas = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false });
 
   if (linhas.length < 2) throw new Error('Planilha sem dados.');
 
@@ -721,28 +782,31 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
     return -1;
   }
 
-  // Detectar "barras 2" ANTES de "barras" para evitar ambiguidade
-  const colBarras2  = acharColuna('código de barras 2', 'codigo de barras 2', 'barras 2', 'barcode 2', 'ean2', 'ean 2');
-  const colBarras   = acharColuna('código de barras', 'codigo de barras', 'barcode', 'ean', 'barras');
-  const colInterno  = acharColuna('código interno', 'codigo interno', 'codigo_interno', 'interno');
-  const colNome     = acharColuna('nombre del producto', 'nombre', 'nome', 'name', 'produto');
-  const colMarca    = acharColuna('marca', 'brand');
-  const colCateg    = acharColuna('categoría', 'categoria', 'category');
-  const colSubCateg = acharColuna('subcategoría', 'subcategoria', 'subcategory', 'subcateg');
-  const colTipo     = acharColuna('tipo de producto', 'tipo', 'type');
-  const colModelo   = acharColuna('modelo', 'model');
-  const colCapacid  = acharColuna('capacidad', 'capacidade', 'capacity', 'btu');
-  const colTecnolog = acharColuna('tecnología', 'tecnologia', 'technology');
-  const colCiclo    = acharColuna('ciclo', 'cycle');
-  const colVoltaje  = acharColuna('voltaje', 'voltagem', 'voltage', 'volt');
-  const colColor    = acharColuna('color', 'cor', 'colour');
-  const colPeso     = acharColuna('peso', 'weight');
-  const colDimensi  = acharColuna('dimensiones', 'dimensões', 'dimensoes', 'dimensions');
-  const colPar      = acharColuna('código del conjunto', 'codigo del conjunto', 'conjunto', 'codigo_par', 'par');
-  const colLink     = acharColuna('link', 'url', 'enlace');
-
-  // colBarras2 é detectado mas não armazenado (campo único de barras)
-  void colBarras2;
+  // Detectar columnas específicas ANTES que las genéricas para evitar ambigüedad.
+  const colBarrasCond   = acharColuna(
+    'código de barras condensadora', 'codigo de barras condensadora',
+    'barras condensadora', 'barras_cond', 'ean condensadora',
+    'código de barras 2', 'codigo de barras 2', 'barras 2', 'barcode 2', 'ean2', 'ean 2',
+  );
+  const colBarras       = acharColuna('código de barras', 'codigo de barras', 'barcode', 'ean', 'barras');
+  const colInterno      = acharColuna('código interno', 'codigo interno', 'codigo_interno', 'interno');
+  const colNome         = acharColuna('nombre del producto', 'nombre', 'nome', 'name', 'produto');
+  const colMarca        = acharColuna('marca', 'brand');
+  const colCateg        = acharColuna('categoría', 'categoria', 'category');
+  const colSubCateg     = acharColuna('subcategoría', 'subcategoria', 'subcategory', 'subcateg');
+  const colTipo         = acharColuna('tipo de producto', 'tipo', 'type');
+  const colModeloEva    = acharColuna('modelo evaporadora', 'modelo_evaporadora', 'model evaporadora', 'modelo eva');
+  const colModeloCond   = acharColuna('modelo condensadora', 'modelo_condensadora', 'model condensadora', 'modelo cond');
+  const colModelo       = acharColuna('modelo', 'model');
+  const colCapacid      = acharColuna('capacidad', 'capacidade', 'capacity', 'btu');
+  const colTecnolog     = acharColuna('tecnología', 'tecnologia', 'technology');
+  const colCiclo        = acharColuna('ciclo', 'cycle');
+  const colVoltaje      = acharColuna('voltaje', 'voltagem', 'voltage', 'volt');
+  const colColor        = acharColuna('color', 'cor', 'colour');
+  const colPeso         = acharColuna('peso', 'weight');
+  const colDimensi      = acharColuna('dimensiones', 'dimensões', 'dimensoes', 'dimensions');
+  const colPar          = acharColuna('código del conjunto', 'codigo del conjunto', 'conjunto', 'codigo_par', 'par');
+  const colLink         = acharColuna('link', 'url', 'enlace');
 
   if (colBarras < 0) throw new Error('Coluna "Código de barras" não encontrada.');
   if (colNome < 0)   throw new Error('Coluna "Nombre del producto" não encontrada.');
@@ -754,11 +818,14 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
   type LinhaImport = {
     codigoInterno: string;
     codigoBarras: string;
+    codigoBarrasCond: string | null;
     nome: string;
     marca: string | null;
     categoria: string | null;
     subcategoria: string | null;
     modelo: string | null;
+    modeloEvaporadora: string | null;
+    modeloCondensadora: string | null;
     capacidad: string | null;
     tecnologia: string | null;
     ciclo: string | null;
@@ -793,11 +860,14 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
     produtos.push({
       codigoInterno: interno || barras,
       codigoBarras: barras,
+      codigoBarrasCond: cel(linha, colBarrasCond) || null,
       nome,
       marca: marca || null,
       categoria: categ || null,
       subcategoria: cel(linha, colSubCateg) || null,
       modelo: cel(linha, colModelo) || null,
+      modeloEvaporadora: cel(linha, colModeloEva) || null,
+      modeloCondensadora: cel(linha, colModeloCond) || null,
       capacidad: cel(linha, colCapacid) || null,
       tecnologia: cel(linha, colTecnolog) || null,
       ciclo: cel(linha, colCiclo) || null,
@@ -820,28 +890,35 @@ export async function importarCatalogoExcel(base64: string): Promise<number> {
       // Atualiza produto existente pelo código de barras
       const upd = await db.runAsync(
         `UPDATE produtos
-         SET nome = ?, marca = ?, categoria = ?, subcategoria = ?, modelo = ?,
+         SET nome = ?, marca = ?, categoria = ?, subcategoria = ?,
+             modelo = ?, modelo_evaporadora = ?, modelo_condensadora = ?,
+             codigo_barras_cond = ?,
              capacidad = ?, tecnologia = ?, ciclo = ?, voltaje = ?, color = ?,
              peso = ?, dimensiones = ?, link = ?, tipo_produto = ?, codigo_par = ?,
              especificacoes_resumo = NULL, origem = 'catalogo', ativo = 1
          WHERE codigo_barras = ?;`,
-        p.nome, p.marca, p.categoria, p.subcategoria, p.modelo,
+        p.nome, p.marca, p.categoria, p.subcategoria,
+        p.modelo, p.modeloEvaporadora, p.modeloCondensadora,
+        p.codigoBarrasCond,
         p.capacidad, p.tecnologia, p.ciclo, p.voltaje, p.color,
         p.peso, p.dimensiones, p.link, p.tipoProduto, p.codigoPar,
         p.codigoBarras,
       );
 
-      // Se não existe ainda, insere como novo
       if (upd.changes === 0) {
         await db.runAsync(
           `INSERT OR IGNORE INTO produtos
-             (codigo_interno, codigo_barras, nome, marca, categoria,
-              subcategoria, modelo, capacidad, tecnologia, ciclo, voltaje, color, peso, dimensiones,
+             (codigo_interno, codigo_barras, codigo_barras_cond,
+              nome, marca, categoria, subcategoria,
+              modelo, modelo_evaporadora, modelo_condensadora,
+              capacidad, tecnologia, ciclo, voltaje, color, peso, dimensiones,
               link, tipo_produto, codigo_par, origem)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');`,
-          p.codigoInterno, p.codigoBarras, p.nome, p.marca, p.categoria,
-          p.subcategoria, p.modelo, p.capacidad, p.tecnologia, p.ciclo,
-          p.voltaje, p.color, p.peso, p.dimensiones, p.link, p.tipoProduto, p.codigoPar,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'catalogo');`,
+          p.codigoInterno, p.codigoBarras, p.codigoBarrasCond,
+          p.nome, p.marca, p.categoria, p.subcategoria,
+          p.modelo, p.modeloEvaporadora, p.modeloCondensadora,
+          p.capacidad, p.tecnologia, p.ciclo, p.voltaje, p.color,
+          p.peso, p.dimensiones, p.link, p.tipoProduto, p.codigoPar,
         );
       }
     }
@@ -1424,12 +1501,15 @@ type LeituraConferenciaSQLite = {
   status_revisao: StatusRevisao;
   codigo_interno: string;
   codigo_barras: string | null;
+  codigo_barras_cond: string | null;
   codigo_par: string | null;
   nome: string;
   marca: string | null;
   categoria: string | null;
   subcategoria: string | null;
   modelo: string | null;
+  modelo_evaporadora: string | null;
+  modelo_condensadora: string | null;
   capacidad: string | null;
   tecnologia: string | null;
   ciclo: string | null;
@@ -1460,12 +1540,15 @@ export async function obterLeiturasConferencia(
         leituras_conferencia.status_revisao AS status_revisao,
         produtos.codigo_interno AS codigo_interno,
         produtos.codigo_barras AS codigo_barras,
+        produtos.codigo_barras_cond AS codigo_barras_cond,
         produtos.codigo_par AS codigo_par,
         produtos.nome AS nome,
         produtos.marca AS marca,
         produtos.categoria AS categoria,
         produtos.subcategoria AS subcategoria,
         produtos.modelo AS modelo,
+        produtos.modelo_evaporadora AS modelo_evaporadora,
+        produtos.modelo_condensadora AS modelo_condensadora,
         produtos.capacidad AS capacidad,
         produtos.tecnologia AS tecnologia,
         produtos.ciclo AS ciclo,
@@ -1492,12 +1575,15 @@ export async function obterLeiturasConferencia(
     produto: converterProduto({
       codigo_interno: item.codigo_interno,
       codigo_barras: item.codigo_barras,
+      codigo_barras_cond: item.codigo_barras_cond,
       codigo_par: item.codigo_par,
       nome: item.nome,
       marca: item.marca,
       categoria: item.categoria,
       subcategoria: item.subcategoria,
       modelo: item.modelo,
+      modelo_evaporadora: item.modelo_evaporadora,
+      modelo_condensadora: item.modelo_condensadora,
       capacidad: item.capacidad,
       tecnologia: item.tecnologia,
       ciclo: item.ciclo,
