@@ -36,7 +36,7 @@ type DadosProduto = {
 type Props = {
   item: LeituraConferencia;
   onFechar: () => void;
-  onSalvarQuantidade: (novaQuantidade: number) => void;
+  onSalvarQuantidade?: (novaQuantidade: number) => void;
   onRemover: () => void;
   onSalvarProdutoNovo: (dados: DadosProdutoRapido) => Promise<void>;
   onAtualizarTipo?: (tipo: TipoProduto) => Promise<string | null>;
@@ -64,10 +64,6 @@ export function ModalEdicaoItem({
   onParear,
   onDesparear,
 }: Props) {
-  const [quantidadeTexto, setQuantidadeTexto] = useState(
-    String(item.quantidade),
-  );
-
   // Campos para produto desconhecido
   const [codigoInterno, setCodigoInterno] = useState(
     item.produto.codigoInterno,
@@ -577,23 +573,6 @@ export function ModalEdicaoItem({
               <View style={styles.editDivider} />
             </>
           )}
-
-          <Text style={styles.editLabel}>QUANTIDADE</Text>
-          <TextInput
-            style={styles.editInput}
-            value={quantidadeTexto}
-            onChangeText={setQuantidadeTexto}
-            keyboardType="number-pad"
-            autoFocus
-            selectTextOnFocus
-          />
-
-          <Pressable
-            style={styles.editSaveButton}
-            onPress={() => onSalvarQuantidade(Number(quantidadeTexto) || 0)}
-          >
-            <Text style={styles.editSaveButtonText}>SALVAR QUANTIDADE</Text>
-          </Pressable>
 
           <Pressable style={styles.editRemoveButton} onPress={onRemover}>
             <Text style={styles.editRemoveButtonText}>

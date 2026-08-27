@@ -1,8 +1,9 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -69,10 +70,23 @@ export default function ResultadoScreen() {
   const [mensagemNf, setMensagemNf] = useState<string | null>(null);
 
   const [itemEditando, setItemEditando] = useState<LeituraConferencia | null>(null);
+  const [qtdEdit, setQtdEdit] = useState<{ item: LeituraConferencia; qtd: number } | null>(null);
 
   const scrollRef = useRef<ScrollView>(null);
 
   const modoRevisao = conferencia?.status === 'em_andamento';
+
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (qtdEdit) { setQtdEdit(null); return true; }
+        if (itemEditando) { setItemEditando(null); return true; }
+        if (mostrarConfirmacaoFinalizar) { setMostrarConfirmacaoFinalizar(false); return true; }
+        return false;
+      });
+      return () => sub.remove();
+    }, [qtdEdit, itemEditando, mostrarConfirmacaoFinalizar]),
+  );
 
   // ==========================================================
   // CARREGAR DADOS
@@ -226,6 +240,29 @@ export default function ResultadoScreen() {
       setMensagemNf(error instanceof Error ? error.message : 'Erro ao importar NF.');
     } finally {
       setImportandoNf(false);
+    }
+  }
+
+  async function salvarQtdRapida() {
+    if (!qtdEdit || !conferenciaValida) return;
+    const { item, qtd } = qtdEdit;
+    setQtdEdit(null);
+    const qtdValida = Math.max(0, Math.floor(qtd));
+    try {
+      if (qtdValida === 0) {
+        await removerLeituraConferencia(conferenciaId, item.produto.codigoInterno);
+        setLeituras((lista) => lista.filter((l) => l.produto.codigoInterno !== item.produto.codigoInterno));
+      } else {
+        await editarQuantidadeLeitura(conferenciaId, item.produto.codigoInterno, qtdValida);
+        setLeituras((lista) =>
+          lista.map((l) =>
+            l.produto.codigoInterno === item.produto.codigoInterno ? { ...l, quantidade: qtdValida } : l,
+          ),
+        );
+      }
+      await recarregarResumos();
+    } catch (error) {
+      console.error('Erro ao editar quantidade:', error);
     }
   }
 
@@ -843,28 +880,32 @@ export default function ResultadoScreen() {
                               <Text style={styles.productCode}>{formatarCodigoInterno(item.produto.codigoInterno)}</Text>
                             </View>
                             <View style={styles.productInfo}>
-                              <Text style={styles.productName}>{item.produto.nome}</Text>
+                              <Text style={styles.productName} numberOfLines={1}>{item.produto.nome}</Text>
                               {item.produto.modelo ? (
-                                <Text style={styles.productModelo}>{item.produto.modelo}</Text>
+                                <Text style={styles.productModelo} numberOfLines={1}>{item.produto.modelo}</Text>
                               ) : null}
                               <View style={styles.productMetaRow}>
-                                <Text style={styles.productQuantity}>Qtd: {item.quantidade}</Text>
                                 <View style={[styles.badgeSmall, { backgroundColor: eDiv ? '#F04438' : cor.borda }]}>
                                   <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
                                 </View>
-                              </View>
-                              <View style={styles.acPartesRow}>
                                 <Text style={[styles.acParteBadge, item.produto.tipoProduto === 'evaporadora' ? styles.acParteBadgeEva : styles.acParteBadgeCond]}>
-                                  {item.produto.tipoProduto === 'evaporadora' ? '❄ Evaporadora' : '❄ Condensadora'}
+                                  {item.produto.tipoProduto === 'evaporadora' ? '❄ Eva' : '❄ Cond'}
                                 </Text>
+                                {eLegado && (
+                                  <Text style={styles.legadoBadge}>legado</Text>
+                                )}
                               </View>
-                              {eLegado && (
-                                <Text style={styles.legadoBadge}>sem revisão (legado)</Text>
-                              )}
                               {modoRevisao && (
-                                <Text style={styles.editHint}>toque para editar quantidade</Text>
+                                <Text style={styles.editHint}>toque para editar</Text>
                               )}
                             </View>
+                            <Pressable
+                              style={styles.quantityBox}
+                              onPress={() => { if (modoRevisao) setQtdEdit({ item, qtd: item.quantidade }); }}
+                            >
+                              <Text style={styles.quantityValue}>{item.quantidade}</Text>
+                              <Text style={styles.quantityLabel}>{'QTD'}</Text>
+                            </Pressable>
                           </Pressable>
                           {modoRevisao && (
                             <Pressable
@@ -905,32 +946,34 @@ export default function ResultadoScreen() {
                         <Text style={styles.productCode}>{formatarCodigoInterno(item.produto.codigoInterno)}</Text>
                       </View>
                       <View style={styles.productInfo}>
-                        <Text style={styles.productName}>{item.produto.nome}</Text>
+                        <Text style={styles.productName} numberOfLines={1}>{item.produto.nome}</Text>
                         {item.produto.modelo ? (
-                          <Text style={styles.productModelo}>{item.produto.modelo}</Text>
+                          <Text style={styles.productModelo} numberOfLines={1}>{item.produto.modelo}</Text>
                         ) : null}
                         <View style={styles.productMetaRow}>
-                          <Text style={styles.productQuantity}>Qtd: {item.quantidade}</Text>
                           <View style={[styles.badgeSmall, { backgroundColor: eDiv ? '#F04438' : cor.borda }]}>
                             <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
                           </View>
-                        </View>
-                        {item.produto.tipoProduto !== 'normal' && (
-                          <View style={styles.acPartesRow}>
+                          {item.produto.tipoProduto !== 'normal' && (
                             <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
-                              {item.produto.tipoProduto === 'evaporadora'
-                                ? '❄ Evaporadora'
-                                : '❄ Condensadora'}
+                              {item.produto.tipoProduto === 'evaporadora' ? '❄ Eva' : '❄ Cond'}
                             </Text>
-                          </View>
-                        )}
-                        {eLegado && (
-                          <Text style={styles.legadoBadge}>sem revisão (legado)</Text>
-                        )}
+                          )}
+                          {eLegado && (
+                            <Text style={styles.legadoBadge}>legado</Text>
+                          )}
+                        </View>
                         {modoRevisao && (
-                          <Text style={styles.editHint}>toque para editar quantidade</Text>
+                          <Text style={styles.editHint}>toque para editar</Text>
                         )}
                       </View>
+                      <Pressable
+                        style={styles.quantityBox}
+                        onPress={() => { if (modoRevisao) setQtdEdit({ item, qtd: item.quantidade }); }}
+                      >
+                        <Text style={styles.quantityValue}>{item.quantidade}</Text>
+                        <Text style={styles.quantityLabel}>{'QTD'}</Text>
+                      </Pressable>
                     </Pressable>
                     {modoRevisao && (
                       <Pressable
@@ -983,6 +1026,40 @@ export default function ResultadoScreen() {
         )}
 
       </View>
+
+      {/* Modal rápido de quantidade */}
+      {qtdEdit && modoRevisao && (
+        <View style={styles.overlay}>
+          <View style={styles.qtdCard}>
+            <Text style={styles.qtdCardCodigo}>{formatarCodigoInterno(qtdEdit.item.produto.codigoInterno)}</Text>
+            <Text style={styles.qtdCardNome} numberOfLines={2}>{qtdEdit.item.produto.nome}</Text>
+            <View style={styles.qtdControle}>
+              <Pressable
+                style={styles.qtdBtn}
+                onPress={() => setQtdEdit((prev) => prev ? { ...prev, qtd: Math.max(0, prev.qtd - 1) } : null)}
+              >
+                <Text style={styles.qtdBtnTexto}>−</Text>
+              </Pressable>
+              <Text style={styles.qtdNumero}>{qtdEdit.qtd}</Text>
+              <Pressable
+                style={styles.qtdBtn}
+                onPress={() => setQtdEdit((prev) => prev ? { ...prev, qtd: prev.qtd + 1 } : null)}
+              >
+                <Text style={styles.qtdBtnTexto}>+</Text>
+              </Pressable>
+            </View>
+            {qtdEdit.qtd === 0 && (
+              <Text style={styles.qtdAvisoRemover}>Quantidade 0 vai remover o item</Text>
+            )}
+            <Pressable style={styles.qtdSalvar} onPress={() => { void salvarQtdRapida(); }}>
+              <Text style={styles.qtdSalvarTexto}>SALVAR</Text>
+            </Pressable>
+            <Pressable style={styles.qtdCancelar} onPress={() => setQtdEdit(null)}>
+              <Text style={styles.qtdCancelarTexto}>CANCELAR</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       {/* Modal de edição de item */}
       {itemEditando && (
@@ -1193,23 +1270,29 @@ const styles = StyleSheet.create({
   productMain: { padding: 12, flexDirection: 'row', alignItems: 'center' },
 
   productCodeBox: {
-    minWidth: 72, paddingVertical: 8, paddingHorizontal: 6,
+    minWidth: 64, paddingVertical: 8, paddingHorizontal: 6,
     borderRadius: 8, alignItems: 'center',
   },
 
-  productCode: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+  productCode: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
 
-  productInfo: { flex: 1, marginLeft: 12 },
+  productInfo: { flex: 1, marginLeft: 10 },
 
-  productName: { fontSize: 14, fontWeight: '700', color: '#18212F' },
+  productName: { fontSize: 13, fontWeight: '700', color: '#18212F' },
 
-  productModelo: { marginTop: 2, fontSize: 11, color: '#667085', fontStyle: 'italic' },
+  productModelo: { fontSize: 11, fontWeight: '600', color: '#475467', marginTop: 2 },
 
   productMetaRow: {
-    marginTop: 5, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 6,
   },
 
-  productQuantity: { fontSize: 12, color: '#667085' },
+  quantityBox: {
+    minWidth: 52, alignItems: 'center', justifyContent: 'center', paddingLeft: 8,
+  },
+
+  quantityValue: { fontSize: 22, fontWeight: '900', color: '#18212F' },
+
+  quantityLabel: { fontSize: 8, fontWeight: '700', color: '#98A2B3', marginTop: 1 },
 
   badgeSmall: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
 
@@ -1372,6 +1455,98 @@ const styles = StyleSheet.create({
   },
 
   confirmCancelButtonText: { fontSize: 14, fontWeight: '700', color: '#667085' },
+
+  // ---- Modal rápido de quantidade ----
+  qtdCard: {
+    width: '100%',
+    maxWidth: 320,
+    padding: 24,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+  },
+
+  qtdCardCodigo: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#208AEF',
+  },
+
+  qtdCardNome: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#18212F',
+    textAlign: 'center',
+  },
+
+  qtdControle: {
+    marginTop: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+  },
+
+  qtdBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F2F4F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdBtnTexto: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#18212F',
+    lineHeight: 32,
+  },
+
+  qtdNumero: {
+    fontSize: 48,
+    fontWeight: '900',
+    color: '#18212F',
+    minWidth: 72,
+    textAlign: 'center',
+  },
+
+  qtdAvisoRemover: {
+    marginTop: 10,
+    fontSize: 11,
+    color: '#F04438',
+    fontWeight: '600',
+  },
+
+  qtdSalvar: {
+    width: '100%',
+    minHeight: 50,
+    marginTop: 24,
+    borderRadius: 13,
+    backgroundColor: '#12B76A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdSalvarTexto: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  qtdCancelar: {
+    width: '100%',
+    minHeight: 44,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdCancelarTexto: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#667085',
+  },
 
   // ---- Comparação NF ----
   nfContainer: {

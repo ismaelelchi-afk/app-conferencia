@@ -56,6 +56,7 @@ import type {
   DadosProdutoRapido,
   LeituraConferencia,
   NfItem,
+  Produto,
   StatusLeitura,
   TipoProduto,
 } from '@/models/produto';
@@ -119,32 +120,38 @@ export default function LeituraScreen() {
   const [cancelando, setCancelando] = useState(false);
   const [nfAlerta, setNfAlerta] = useState<{ texto: string; tipo: 'nao_esperado' | 'excedido' } | null>(null);
 
+  const [produtosAmbiguos, setProdutosAmbiguos] = useState<Produto[]>([]);
+
+  const [qtdEdit, setQtdEdit] = useState<{ item: LeituraConferencia; qtd: number } | null>(null);
+
   const [itemEditando, setItemEditando] =
     useState<LeituraConferencia | null>(null);
 
-  // Intercepta botão voltar do Android quando o modal de edição está aberto.
+  const [nomeConferencia, setNomeConferencia] = useState('');
+  const [mostrarRenomear, setMostrarRenomear] = useState(false);
+  const [novoNome, setNovoNome] = useState('');
+  const [salvandoNome, setSalvandoNome] = useState(false);
+
+  // Intercepta botão voltar do Android — fecha o modal mais recente em vez de sair.
   useFocusEffect(
     useCallback(() => {
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (itemEditando) {
-          setItemEditando(null);
-          return true;
-        }
+        if (qtdEdit) { setQtdEdit(null); return true; }
+        if (produtosAmbiguos.length > 0) { setProdutosAmbiguos([]); ultimoCodigoLido.current = null; return true; }
+        if (itemEditando) { setItemEditando(null); return true; }
+        if (mostrarConfirmacao) { setMostrarConfirmacao(false); return true; }
+        if (mostrarConfirmacaoCancelar) { setMostrarConfirmacaoCancelar(false); return true; }
+        if (mostrarRenomear) { setMostrarRenomear(false); return true; }
         return false;
       });
       return () => sub.remove();
-    }, [itemEditando]),
+    }, [qtdEdit, produtosAmbiguos, itemEditando, mostrarConfirmacao, mostrarConfirmacaoCancelar, mostrarRenomear]),
   );
 
   // Tempo configurado em Configuracoes (ou o padrao).
   const [tempoBloqueioMs, setTempoBloqueioMs] = useState(
     TEMPO_BLOQUEIO_MESMO_CODIGO_MS_PADRAO,
   );
-
-  const [nomeConferencia, setNomeConferencia] = useState('');
-  const [mostrarRenomear, setMostrarRenomear] = useState(false);
-  const [novoNome, setNovoNome] = useState('');
-  const [salvandoNome, setSalvandoNome] = useState(false);
 
   const ultimoCodigoLido =
     useRef<string | null>(null);
@@ -303,6 +310,95 @@ export default function LeituraScreen() {
     setCameraAtiva(true);
   }
 
+  async function registrarProdutoResolvido(produto: Produto, statusInicial: StatusLeitura) {
+    const agora = new Date().toISOString();
+
+    const produtoExistente = produtos.find(
+      (item) => item.produto.codigoInterno === produto.codigoInterno,
+    );
+
+    const primeiraLeitura = produtoExistente ? produtoExistente.primeiraLeitura : agora;
+    const statusFinal = produtoExistente?.status ?? statusInicial;
+
+    await registrarLeituraConferencia(
+      conferenciaId,
+      produto.codigoInterno,
+      1,
+      primeiraLeitura,
+      agora,
+      statusFinal,
+    );
+
+    setProdutos((listaAtual) => {
+      const indice = listaAtual.findIndex(
+        (item) => item.produto.codigoInterno === produto.codigoInterno,
+      );
+
+      if (indice >= 0) {
+        const novaLista = [...listaAtual];
+        const itemAtual = novaLista[indice];
+        novaLista[indice] = {
+          ...itemAtual,
+          quantidade: itemAtual.quantidade + 1,
+          ultimaLeitura: agora,
+        };
+        return novaLista;
+      }
+
+      const novoItem: LeituraConferencia = {
+        id: -1,
+        produto,
+        quantidade: 1,
+        primeiraLeitura,
+        ultimaLeitura: agora,
+        status: statusFinal,
+        statusRevisao: 'ok',
+      };
+
+      return [novoItem, ...listaAtual];
+    });
+
+    const ehDesconhecido = statusFinal === 'desconhecido';
+
+    if (ehDesconhecido) {
+      tocarSom(somVermelho);
+      setFeedbackVermelho(true);
+    } else {
+      tocarSom(somAzul);
+      setLeituraConfirmada(true);
+    }
+
+    vibrarSeAtivado();
+
+    // Verificação NF — usa refs para garantir valores atuais mesmo com memoização.
+    const nfItensAtual = nfItensRef.current;
+    if (nfCarregadaRef.current && nfItensAtual.length > 0 && !ehDesconhecido) {
+      const nfItem = nfItensAtual.find((ni) => ni.codigoInterno === produto.codigoInterno);
+      let alertaNf: { texto: string; tipo: 'nao_esperado' | 'excedido' } | null = null;
+
+      if (!nfItem) {
+        alertaNf = { texto: 'NÃO ESPERADO NA NF', tipo: 'nao_esperado' };
+      } else {
+        const qtdAtual = (produtoExistente?.quantidade ?? 0) + 1;
+        if (qtdAtual > nfItem.quantidadeEsperada) {
+          alertaNf = { texto: `EXCEDIDO (esp. ${nfItem.quantidadeEsperada})`, tipo: 'excedido' };
+        }
+      }
+
+      if (alertaNf) {
+        if (nfAlertaTimer.current) clearTimeout(nfAlertaTimer.current);
+        setNfAlerta(alertaNf);
+        nfAlertaTimer.current = setTimeout(() => setNfAlerta(null), 3000);
+      }
+    }
+
+    if (azulTimer.current) clearTimeout(azulTimer.current);
+    azulTimer.current = setTimeout(() => {
+      setLeituraConfirmada(false);
+      setFeedbackVermelho(false);
+    }, 450);
+  }
+
   async function registrarLeitura(
     codigoBarras: string,
   ) {
@@ -322,12 +418,15 @@ export default function LeituraScreen() {
     setProcessando(true);
 
     try {
-      const agora = new Date().toISOString();
-
       const resultado = await buscarPorIdentificador(codigoBarras);
-      let produto = resultado?.tipo === 'encontrado' ? resultado.produto
-                  : resultado?.tipo === 'multiplos'  ? resultado.produtos[0]
-                  : undefined;
+
+      if (resultado?.tipo === 'multiplos') {
+        ultimoCodigoLido.current = null;
+        setProdutosAmbiguos(resultado.produtos);
+        return;
+      }
+
+      let produto = resultado?.tipo === 'encontrado' ? resultado.produto : undefined;
       let statusNovaLeitura: StatusLeitura = 'normal';
 
       if (!produto) {
@@ -335,91 +434,7 @@ export default function LeituraScreen() {
         statusNovaLeitura = 'desconhecido';
       }
 
-      const produtoExistente = produtos.find(
-        (item) => item.produto.codigoInterno === produto!.codigoInterno,
-      );
-
-      const primeiraLeitura = produtoExistente ? produtoExistente.primeiraLeitura : agora;
-      const statusFinal = produtoExistente?.status ?? statusNovaLeitura;
-
-      await registrarLeituraConferencia(
-        conferenciaId,
-        produto.codigoInterno,
-        1,
-        primeiraLeitura,
-        agora,
-        statusFinal,
-      );
-
-      setProdutos((listaAtual) => {
-        const indice = listaAtual.findIndex(
-          (item) => item.produto.codigoInterno === produto!.codigoInterno,
-        );
-
-        if (indice >= 0) {
-          const novaLista = [...listaAtual];
-          const itemAtual = novaLista[indice];
-          novaLista[indice] = {
-            ...itemAtual,
-            quantidade: itemAtual.quantidade + 1,
-            ultimaLeitura: agora,
-          };
-          return novaLista;
-        }
-
-        const novoItem: LeituraConferencia = {
-          id: -1,
-          produto: produto!,
-          quantidade: 1,
-          primeiraLeitura,
-          ultimaLeitura: agora,
-          status: statusFinal,
-          statusRevisao: 'ok',
-        };
-
-        return [novoItem, ...listaAtual];
-      });
-
-      const ehDesconhecido = statusFinal === 'desconhecido';
-
-      if (ehDesconhecido) {
-        tocarSom(somVermelho);
-        setFeedbackVermelho(true);
-      } else {
-        tocarSom(somAzul);
-        setLeituraConfirmada(true);
-      }
-
-      vibrarSeAtivado();
-
-      // Verificação NF — usa refs para garantir valores atuais mesmo com memoização.
-      const nfItensAtual = nfItensRef.current;
-      if (nfCarregadaRef.current && nfItensAtual.length > 0 && !ehDesconhecido) {
-        const nfItem = nfItensAtual.find((ni) => ni.codigoInterno === produto!.codigoInterno);
-        let alertaNf: { texto: string; tipo: 'nao_esperado' | 'excedido' } | null = null;
-
-        if (!nfItem) {
-          alertaNf = { texto: 'NÃO ESPERADO NA NF', tipo: 'nao_esperado' };
-        } else {
-          // quantidade atual após este scan
-          const qtdAtual = (produtoExistente?.quantidade ?? 0) + 1;
-          if (qtdAtual > nfItem.quantidadeEsperada) {
-            alertaNf = { texto: `EXCEDIDO (esp. ${nfItem.quantidadeEsperada})`, tipo: 'excedido' };
-          }
-        }
-
-        if (alertaNf) {
-          if (nfAlertaTimer.current) clearTimeout(nfAlertaTimer.current);
-          setNfAlerta(alertaNf);
-          nfAlertaTimer.current = setTimeout(() => setNfAlerta(null), 3000);
-        }
-      }
-
-      if (azulTimer.current) clearTimeout(azulTimer.current);
-      azulTimer.current = setTimeout(() => {
-        setLeituraConfirmada(false);
-        setFeedbackVermelho(false);
-      }, 450);
+      await registrarProdutoResolvido(produto, statusNovaLeitura);
 
       setTimeout(() => {
         ultimoCodigoLido.current = null;
@@ -430,6 +445,47 @@ export default function LeituraScreen() {
     } finally {
       processandoRef.current = false;
       setProcessando(false);
+    }
+  }
+
+  async function handleSelecionarAmbiguo(produto: Produto) {
+    setProdutosAmbiguos([]);
+    if (processandoRef.current || !conferenciaValida) return;
+    processandoRef.current = true;
+    setProcessando(true);
+    try {
+      await registrarProdutoResolvido(produto, 'normal');
+      setTimeout(() => {
+        ultimoCodigoLido.current = null;
+      }, tempoBloqueioMs);
+    } catch (error) {
+      console.error('Erro ao registrar produto selecionado:', error);
+      ultimoCodigoLido.current = null;
+    } finally {
+      processandoRef.current = false;
+      setProcessando(false);
+    }
+  }
+
+  async function salvarQtdRapida() {
+    if (!qtdEdit || !conferenciaValida) return;
+    const { item, qtd } = qtdEdit;
+    setQtdEdit(null);
+    const qtdValida = Math.max(0, Math.floor(qtd));
+    try {
+      if (qtdValida === 0) {
+        await removerLeituraConferencia(conferenciaId, item.produto.codigoInterno);
+        setProdutos((lista) => lista.filter((l) => l.produto.codigoInterno !== item.produto.codigoInterno));
+      } else {
+        await editarQuantidadeLeitura(conferenciaId, item.produto.codigoInterno, qtdValida);
+        setProdutos((lista) =>
+          lista.map((l) =>
+            l.produto.codigoInterno === item.produto.codigoInterno ? { ...l, quantidade: qtdValida } : l,
+          ),
+        );
+      }
+    } catch (error) {
+      console.error('Erro ao editar quantidade:', error);
     }
   }
 
@@ -1018,10 +1074,6 @@ return (
           <Text style={styles.headerTitle}>
             {nomeConferencia || formatarNumeroConferencia(conferenciaId)}
           </Text>
-
-          <Text style={styles.headerSubtitle}>
-            Conferência a cegas
-          </Text>
         </Pressable>
 
         <Pressable
@@ -1203,11 +1255,14 @@ return (
                               {item.produto.tipoProduto === 'evaporadora' ? '❄ Evaporadora' : '❄ Condensadora'}
                             </Text>
                           </View>
-                          <View style={styles.quantityBox}>
+                          <Pressable
+                            style={styles.quantityBox}
+                            onPress={() => setQtdEdit({ item, qtd: item.quantidade })}
+                          >
                             <Text style={styles.quantityLabel}>QTD</Text>
                             <Text style={styles.quantityValue}>{item.quantidade}</Text>
-                            <Text style={styles.editHint}>toque p/ editar</Text>
-                          </View>
+                            <Text style={styles.editHint}>✎</Text>
+                          </Pressable>
                         </Pressable>
                       );
                     })}
@@ -1278,13 +1333,14 @@ return (
                       </Text>
                     </View>
 
-                    <View style={styles.quantityBox}>
+                    <Pressable
+                      style={styles.quantityBox}
+                      onPress={() => setQtdEdit({ item, qtd: item.quantidade })}
+                    >
                       <Text style={styles.quantityLabel}>QTD</Text>
-                      <Text style={styles.quantityValue}>
-                        {item.quantidade}
-                      </Text>
-                      <Text style={styles.editHint}>toque p/ editar</Text>
-                    </View>
+                      <Text style={styles.quantityValue}>{item.quantidade}</Text>
+                      <Text style={styles.editHint}>✎</Text>
+                    </Pressable>
                   </Pressable>
                 );
               })}
@@ -1336,7 +1392,74 @@ return (
         </View>
       )}
 
-{itemEditando && (
+      {qtdEdit && (
+        <View style={styles.overlay}>
+          <View style={styles.qtdCard}>
+            <Text style={styles.qtdCardCodigo}>{formatarCodigoInterno(qtdEdit.item.produto.codigoInterno)}</Text>
+            <Text style={styles.qtdCardNome} numberOfLines={2}>{qtdEdit.item.produto.nome}</Text>
+            <View style={styles.qtdControle}>
+              <Pressable
+                style={styles.qtdBtn}
+                onPress={() => setQtdEdit((prev) => prev ? { ...prev, qtd: Math.max(0, prev.qtd - 1) } : null)}
+              >
+                <Text style={styles.qtdBtnTexto}>−</Text>
+              </Pressable>
+              <Text style={styles.qtdNumero}>{qtdEdit.qtd}</Text>
+              <Pressable
+                style={styles.qtdBtn}
+                onPress={() => setQtdEdit((prev) => prev ? { ...prev, qtd: prev.qtd + 1 } : null)}
+              >
+                <Text style={styles.qtdBtnTexto}>+</Text>
+              </Pressable>
+            </View>
+            {qtdEdit.qtd === 0 && (
+              <Text style={styles.qtdAvisoRemover}>Quantidade 0 vai remover o item</Text>
+            )}
+            <Pressable style={styles.qtdSalvar} onPress={() => { void salvarQtdRapida(); }}>
+              <Text style={styles.qtdSalvarTexto}>SALVAR</Text>
+            </Pressable>
+            <Pressable style={styles.qtdCancelar} onPress={() => setQtdEdit(null)}>
+              <Text style={styles.qtdCancelarTexto}>CANCELAR</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+{produtosAmbiguos.length > 0 && (
+        <View style={styles.overlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmIcon}>⚠️</Text>
+            <Text style={styles.confirmTitle}>PRODUTO AMBÍGUO</Text>
+            <Text style={styles.confirmText}>
+              O código corresponde a mais de um produto. Selecione o correto:
+            </Text>
+            {produtosAmbiguos.map((p) => (
+              <Pressable
+                key={p.codigoInterno}
+                style={styles.ambiguoItem}
+                onPress={() => { void handleSelecionarAmbiguo(p); }}
+              >
+                <Text style={styles.ambiguoItemCodigo}>{formatarCodigoInterno(p.codigoInterno)}</Text>
+                <Text style={styles.ambiguoItemNome} numberOfLines={2}>{p.nome}</Text>
+                {p.modelo ? (
+                  <Text style={styles.ambiguoItemModelo}>{p.modelo}</Text>
+                ) : null}
+              </Pressable>
+            ))}
+            <Pressable
+              style={styles.editCancelButton}
+              onPress={() => {
+                setProdutosAmbiguos([]);
+                ultimoCodigoLido.current = null;
+              }}
+            >
+              <Text style={styles.editCancelButtonText}>CANCELAR</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {itemEditando && (
         <ModalEdicaoItem
           item={itemEditando}
           onFechar={fecharEdicao}
@@ -2410,6 +2533,127 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: '#344054',
+  },
+
+  ambiguoItem: {
+    width: '100%',
+    marginTop: 8,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#F2F4F7',
+    borderWidth: 1,
+    borderColor: '#E4E7EC',
+  },
+
+  ambiguoItemCodigo: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#175CD3',
+  },
+
+  ambiguoItemNome: {
+    marginTop: 2,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#18212F',
+  },
+
+  ambiguoItemModelo: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#667085',
+    fontStyle: 'italic',
+  },
+
+  qtdCard: {
+    width: '100%',
+    maxWidth: 320,
+    padding: 24,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+  },
+
+  qtdCardCodigo: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#208AEF',
+  },
+
+  qtdCardNome: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#18212F',
+    textAlign: 'center',
+  },
+
+  qtdControle: {
+    marginTop: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+  },
+
+  qtdBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F2F4F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdBtnTexto: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#18212F',
+    lineHeight: 32,
+  },
+
+  qtdNumero: {
+    fontSize: 48,
+    fontWeight: '900',
+    color: '#18212F',
+    minWidth: 72,
+    textAlign: 'center',
+  },
+
+  qtdAvisoRemover: {
+    marginTop: 10,
+    fontSize: 11,
+    color: '#F04438',
+    fontWeight: '600',
+  },
+
+  qtdSalvar: {
+    width: '100%',
+    minHeight: 50,
+    marginTop: 24,
+    borderRadius: 13,
+    backgroundColor: '#208AEF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdSalvarTexto: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  qtdCancelar: {
+    width: '100%',
+    minHeight: 44,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  qtdCancelarTexto: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#667085',
   },
 });
 
