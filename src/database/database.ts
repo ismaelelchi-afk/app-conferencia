@@ -1742,6 +1742,22 @@ export async function apagarHistoricoFinalizado(): Promise<number> {
 }
 
 // ============================================================
+// ELIMINAR CONFERÊNCIAS PELO ID
+// ============================================================
+
+export async function eliminarConferencias(ids: number[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await obterDatabase();
+  await db.withTransactionAsync(async () => {
+    for (const id of ids) {
+      await db.runAsync(`DELETE FROM leituras_conferencia WHERE conferencia_id = ?;`, id);
+      await db.runAsync(`DELETE FROM nf_itens WHERE conferencia_id = ?;`, id);
+      await db.runAsync(`DELETE FROM conferencias WHERE id = ?;`, id);
+    }
+  });
+}
+
+// ============================================================
 // LISTAR PRODUTOS MANUAIS / DESCONHECIDOS
 // Usado na tela "Gerenciar produtos". Traz primeiro os
 // desconhecidos (precisam de atenção), depois os manuais.

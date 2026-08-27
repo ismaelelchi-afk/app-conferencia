@@ -58,7 +58,6 @@ import type {
   NfItem,
   Produto,
   StatusLeitura,
-  TipoProduto,
 } from '@/models/produto';
 
 // ============================================================
@@ -664,8 +663,6 @@ function abrirEdicao(item: LeituraConferencia) {
                 peso: dados.peso,
                 dimensiones: dados.dimensiones,
                 link: dados.link,
-                tipoProduto: dados.tipoProduto ?? 'normal',
-                codigoPar: dados.codigoPar,
                 origem: 'manual',
               },
             }
@@ -674,29 +671,6 @@ function abrirEdicao(item: LeituraConferencia) {
     );
 
     fecharEdicao();
-  }
-
-  async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, tipoProduto: tipo },
-        itemEditando.produto.codigoInterno,
-      );
-
-      setProdutos((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...item, produto: { ...item.produto, tipoProduto: tipo } }
-            : item,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível salvar a alteração.';
-    }
   }
 
   async function salvarDadosProduto(dados: {
@@ -735,92 +709,6 @@ function abrirEdicao(item: LeituraConferencia) {
       return null;
     } catch {
       return 'Não foi possível salvar os dados.';
-    }
-  }
-
-  async function handleParear(
-    codigoInternoSocio: string,
-    codigoPar: string,
-    tipoSocio: TipoProduto,
-    tipoItem: TipoProduto,
-  ): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoPar, tipoProduto: tipoItem },
-        itemEditando.produto.codigoInterno,
-      );
-
-      const socio = produtos.find(
-        (it) => it.produto.codigoInterno === codigoInternoSocio,
-      );
-      if (socio) {
-        const tipoProdutoSocio =
-          socio.produto.tipoProduto === 'normal' ? tipoSocio : socio.produto.tipoProduto;
-        await atualizarProduto(
-          { ...socio.produto, codigoPar, tipoProduto: tipoProdutoSocio },
-          socio.produto.codigoInterno,
-        );
-        setProdutos((lista) =>
-          lista.map((it) =>
-            it.produto.codigoInterno === codigoInternoSocio
-              ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoProdutoSocio } }
-              : it,
-          ),
-        );
-      }
-
-      setProdutos((lista) =>
-        lista.map((it) =>
-          it.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoItem } }
-            : it,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível parear.';
-    }
-  }
-
-  async function handleDesparear(): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    const codigoParAtual = itemEditando.produto.codigoPar;
-    if (!codigoParAtual) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoPar: undefined },
-        itemEditando.produto.codigoInterno,
-      );
-
-      const socio = produtos.find(
-        (it) =>
-          it.produto.codigoPar === codigoParAtual &&
-          it.produto.codigoInterno !== itemEditando.produto.codigoInterno,
-      );
-      if (socio) {
-        await atualizarProduto(
-          { ...socio.produto, codigoPar: undefined },
-          socio.produto.codigoInterno,
-        );
-      }
-
-      setProdutos((lista) =>
-        lista.map((it) =>
-          it.produto.codigoInterno === itemEditando.produto.codigoInterno ||
-          it.produto.codigoInterno === socio?.produto.codigoInterno
-            ? { ...it, produto: { ...it.produto, codigoPar: undefined } }
-            : it,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível desparear.';
     }
   }
 
@@ -927,30 +815,6 @@ function abrirEdicao(item: LeituraConferencia) {
       setCancelando(false);
     }
   }
-
-  const itensOrganizados = useMemo(() => {
-    const grupos: Record<string, LeituraConferencia[]> = {};
-    const individuais: LeituraConferencia[] = [];
-
-    for (const item of produtos) {
-      if (
-        item.produto.codigoPar &&
-        (item.produto.tipoProduto === 'evaporadora' ||
-          item.produto.tipoProduto === 'condensadora')
-      ) {
-        grupos[item.produto.codigoPar] = grupos[item.produto.codigoPar] ?? [];
-        grupos[item.produto.codigoPar].push(item);
-      } else {
-        individuais.push(item);
-      }
-    }
-
-    for (const g of Object.values(grupos)) {
-      g.sort((a) => (a.produto.tipoProduto === 'evaporadora' ? -1 : 1));
-    }
-
-    return { grupos, individuais };
-  }, [produtos]);
 
   const nfFaltantes = useMemo(() => {
     if (!nfCarregada || nfItens.length === 0) return 0;
@@ -1214,64 +1078,7 @@ return (
             </View>
           ) : (
             <>
-              {/* Pares agrupados */}
-              {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
-                const ambosPresentes =
-                  items.some((i) => i.produto.tipoProduto === 'evaporadora') &&
-                  items.some((i) => i.produto.tipoProduto === 'condensadora') &&
-                  items.length === 2;
-                return (
-                  <View key={`par-${codigoPar}`}>
-                    <View style={styles.parHeader}>
-                      <Text style={styles.parHeaderText}>❄ CONJUNTO</Text>
-                      <Text style={styles.parHeaderCodigo}>{codigoPar}</Text>
-                      {ambosPresentes ? (
-                        <View style={styles.parHeaderBadge}>
-                          <Text style={styles.parHeaderBadgeText}>COMPLETO</Text>
-                        </View>
-                      ) : (
-                        <Text style={styles.parHeaderIncompleto}>falta parte</Text>
-                      )}
-                    </View>
-                    {items.map((item) => {
-                      const cor = CORES_STATUS[item.status];
-                      return (
-                        <Pressable
-                          key={formatarCodigoInterno(item.produto.codigoInterno)}
-                          style={[styles.productCard, styles.productCardPar, { borderColor: cor.borda, backgroundColor: cor.fundo }]}
-                          onPress={() => abrirEdicao(item)}
-                        >
-                          <View style={styles.productInfo}>
-                            <View style={styles.productTopRow}>
-                              <Text style={[styles.internalCodeLarge, { color: cor.texto }]}>
-                                {formatarCodigoInterno(item.produto.codigoInterno)}
-                              </Text>
-                              <View style={[styles.badgeSmall, { backgroundColor: cor.borda }]}>
-                                <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
-                              </View>
-                            </View>
-                            <Text style={styles.productNameList} numberOfLines={1}>{item.produto.nome}</Text>
-                            <Text style={[styles.acParteBadge, item.produto.tipoProduto === 'evaporadora' ? styles.acParteBadgeEva : styles.acParteBadgeCond]}>
-                              {item.produto.tipoProduto === 'evaporadora' ? '❄ Evaporadora' : '❄ Condensadora'}
-                            </Text>
-                          </View>
-                          <Pressable
-                            style={styles.quantityBox}
-                            onPress={() => setQtdEdit({ item, qtd: item.quantidade })}
-                          >
-                            <Text style={styles.quantityLabel}>QTD</Text>
-                            <Text style={styles.quantityValue}>{item.quantidade}</Text>
-                            <Text style={styles.editHint}>✎</Text>
-                          </Pressable>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                );
-              })}
-
-              {/* Individuais */}
-              {itensOrganizados.individuais.map((item) => {
+              {produtos.map((item) => {
                 const cor = CORES_STATUS[item.status];
                 return (
                   <Pressable
@@ -1317,16 +1124,6 @@ return (
                           {item.produto.modelo}
                         </Text>
                       ) : null}
-
-                      {item.produto.tipoProduto !== 'normal' && (
-                        <View style={styles.acPartesRow}>
-                          <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
-                            {item.produto.tipoProduto === 'evaporadora'
-                              ? '❄ Evaporadora'
-                              : '❄ Condensadora'}
-                          </Text>
-                        </View>
-                      )}
 
                       <Text style={styles.productBarcode}>
                         {item.produto.codigoBarras || 'sem código de barras'}
@@ -1466,11 +1263,7 @@ return (
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
-          onAtualizarTipo={atualizarTipo}
           onSalvarDadosProduto={salvarDadosProduto}
-          itensConferencia={produtos}
-          onParear={handleParear}
-          onDesparear={handleDesparear}
         />
       )}
 
@@ -1963,107 +1756,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 9,
     color: '#98A2B3',
-  },
-
-  acPartesRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    gap: 6,
-  },
-
-  acParteBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-
-  acParteBadgeOk: {
-    backgroundColor: '#ECFDF3',
-    color: '#027A48',
-  },
-
-  acParteBadgePend: {
-    backgroundColor: '#F2F4F7',
-    color: '#667085',
-  },
-
-  acParteBadgeTipo: {
-    backgroundColor: '#EFF8FF',
-    color: '#175CD3',
-  },
-
-  parHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 4,
-    paddingHorizontal: 4,
-    gap: 6,
-  },
-
-  parHeaderText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#175CD3',
-    letterSpacing: 0.6,
-  },
-
-  parHeaderCodigo: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#344054',
-    flex: 1,
-  },
-
-  parHeaderBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    backgroundColor: '#ECFDF3',
-  },
-
-  parHeaderBadgeText: {
-    fontSize: 8,
-    fontWeight: '800',
-    color: '#027A48',
-  },
-
-  parHeaderIncompleto: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#98A2B3',
-    fontStyle: 'italic',
-  },
-
-  productCardPar: {
-    marginLeft: 8,
-    borderLeftWidth: 3,
-  },
-
-  acParteBadgeEva: {
-    backgroundColor: '#EFF8FF',
-    color: '#175CD3',
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 3,
-  },
-
-  acParteBadgeCond: {
-    backgroundColor: '#F4F3FF',
-    color: '#5925DC',
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginTop: 3,
   },
 
   quantityBox: {

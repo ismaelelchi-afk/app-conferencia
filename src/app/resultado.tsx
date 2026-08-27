@@ -37,7 +37,6 @@ import type {
   ResumoRevisao,
   StatusLeitura,
   StatusRevisao,
-  TipoProduto,
 } from '@/models/produto';
 import { CORES_STATUS } from '@/constants/cores';
 import { ModalEdicaoItem } from '@/components/ModalEdicaoItem';
@@ -363,8 +362,6 @@ export default function ResultadoScreen() {
                 peso: dados.peso,
                 dimensiones: dados.dimensiones,
                 link: dados.link,
-                tipoProduto: dados.tipoProduto ?? 'normal',
-                codigoPar: dados.codigoPar,
                 origem: 'manual',
               },
             }
@@ -373,29 +370,6 @@ export default function ResultadoScreen() {
     );
 
     fecharEdicao();
-  }
-
-  async function atualizarTipo(tipo: TipoProduto): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, tipoProduto: tipo },
-        itemEditando.produto.codigoInterno,
-      );
-
-      setLeituras((lista) =>
-        lista.map((item) =>
-          item.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...item, produto: { ...item.produto, tipoProduto: tipo } }
-            : item,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível salvar a alteração.';
-    }
   }
 
   async function salvarDadosProduto(dados: {
@@ -437,90 +411,6 @@ export default function ResultadoScreen() {
     }
   }
 
-  async function handleParear(
-    codigoInternoSocio: string,
-    codigoPar: string,
-    tipoSocio: TipoProduto,
-    tipoItem: TipoProduto,
-  ): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoPar, tipoProduto: tipoItem },
-        itemEditando.produto.codigoInterno,
-      );
-
-      const socio = leituras.find((it) => it.produto.codigoInterno === codigoInternoSocio);
-      if (socio) {
-        const tipoProdutoSocio =
-          socio.produto.tipoProduto === 'normal' ? tipoSocio : socio.produto.tipoProduto;
-        await atualizarProduto(
-          { ...socio.produto, codigoPar, tipoProduto: tipoProdutoSocio },
-          socio.produto.codigoInterno,
-        );
-        setLeituras((lista) =>
-          lista.map((it) =>
-            it.produto.codigoInterno === codigoInternoSocio
-              ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoProdutoSocio } }
-              : it,
-          ),
-        );
-      }
-
-      setLeituras((lista) =>
-        lista.map((it) =>
-          it.produto.codigoInterno === itemEditando.produto.codigoInterno
-            ? { ...it, produto: { ...it.produto, codigoPar, tipoProduto: tipoItem } }
-            : it,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível parear.';
-    }
-  }
-
-  async function handleDesparear(): Promise<string | null> {
-    if (!itemEditando) return null;
-
-    const codigoParAtual = itemEditando.produto.codigoPar;
-    if (!codigoParAtual) return null;
-
-    try {
-      await atualizarProduto(
-        { ...itemEditando.produto, codigoPar: undefined },
-        itemEditando.produto.codigoInterno,
-      );
-
-      const socio = leituras.find(
-        (it) =>
-          it.produto.codigoPar === codigoParAtual &&
-          it.produto.codigoInterno !== itemEditando.produto.codigoInterno,
-      );
-      if (socio) {
-        await atualizarProduto(
-          { ...socio.produto, codigoPar: undefined },
-          socio.produto.codigoInterno,
-        );
-      }
-
-      setLeituras((lista) =>
-        lista.map((it) =>
-          it.produto.codigoInterno === itemEditando.produto.codigoInterno ||
-          it.produto.codigoInterno === socio?.produto.codigoInterno
-            ? { ...it, produto: { ...it.produto, codigoPar: undefined } }
-            : it,
-        ),
-      );
-
-      return null;
-    } catch {
-      return 'Não foi possível desparear.';
-    }
-  }
-
   // ==========================================================
   // CONFIRMAR FINALIZAÇÃO
   // ==========================================================
@@ -541,30 +431,6 @@ export default function ResultadoScreen() {
   }
 
   const totalUnidades = leituras.reduce((total, item) => total + item.quantidade, 0);
-
-  const itensOrganizados = useMemo(() => {
-    const grupos: Record<string, LeituraConferencia[]> = {};
-    const individuais: LeituraConferencia[] = [];
-
-    for (const item of leituras) {
-      if (
-        item.produto.codigoPar &&
-        (item.produto.tipoProduto === 'evaporadora' ||
-          item.produto.tipoProduto === 'condensadora')
-      ) {
-        grupos[item.produto.codigoPar] = grupos[item.produto.codigoPar] ?? [];
-        grupos[item.produto.codigoPar].push(item);
-      } else {
-        individuais.push(item);
-      }
-    }
-
-    for (const g of Object.values(grupos)) {
-      g.sort((a) => (a.produto.tipoProduto === 'evaporadora' ? -1 : 1));
-    }
-
-    return { grupos, individuais };
-  }, [leituras]);
 
   // Comparação NF (só quando há itens carregados)
   const comparacaoNf = useMemo((): ResultadoComparacao | null => {
@@ -839,93 +705,7 @@ export default function ResultadoScreen() {
             </View>
           ) : (
             <>
-              {/* Pares agrupados */}
-              {Object.entries(itensOrganizados.grupos).map(([codigoPar, items]) => {
-                const ambosPresentes =
-                  items.some((i) => i.produto.tipoProduto === 'evaporadora') &&
-                  items.some((i) => i.produto.tipoProduto === 'condensadora') &&
-                  items.length === 2;
-                return (
-                  <View key={`par-${codigoPar}`}>
-                    <View style={styles.parHeader}>
-                      <Text style={styles.parHeaderText}>❄ CONJUNTO</Text>
-                      <Text style={styles.parHeaderCodigo}>{codigoPar}</Text>
-                      {ambosPresentes ? (
-                        <View style={styles.parHeaderBadge}>
-                          <Text style={styles.parHeaderBadgeText}>COMPLETO</Text>
-                        </View>
-                      ) : (
-                        <Text style={styles.parHeaderIncompleto}>falta parte</Text>
-                      )}
-                    </View>
-                    {items.map((item) => {
-                      const cor = CORES_STATUS[item.status];
-                      const eDiv = item.statusRevisao === 'divergencia';
-                      const eLegado = item.statusRevisao === 'pendente';
-                      return (
-                        <View
-                          key={item.produto.codigoInterno}
-                          style={[
-                            styles.productCard,
-                            styles.productCardPar,
-                            { borderColor: eDiv ? '#F04438' : cor.borda, backgroundColor: eDiv ? '#FFF1F0' : cor.fundo },
-                          ]}
-                        >
-                          <Pressable
-                            style={styles.productMain}
-                            onPress={() => abrirEdicao(item)}
-                            disabled={!modoRevisao}
-                          >
-                            <View style={[styles.productCodeBox, { backgroundColor: eDiv ? '#F04438' : cor.borda }]}>
-                              <Text style={styles.productCode}>{formatarCodigoInterno(item.produto.codigoInterno)}</Text>
-                            </View>
-                            <View style={styles.productInfo}>
-                              <Text style={styles.productName} numberOfLines={1}>{item.produto.nome}</Text>
-                              {item.produto.modelo ? (
-                                <Text style={styles.productModelo} numberOfLines={1}>{item.produto.modelo}</Text>
-                              ) : null}
-                              <View style={styles.productMetaRow}>
-                                <View style={[styles.badgeSmall, { backgroundColor: eDiv ? '#F04438' : cor.borda }]}>
-                                  <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
-                                </View>
-                                <Text style={[styles.acParteBadge, item.produto.tipoProduto === 'evaporadora' ? styles.acParteBadgeEva : styles.acParteBadgeCond]}>
-                                  {item.produto.tipoProduto === 'evaporadora' ? '❄ Eva' : '❄ Cond'}
-                                </Text>
-                                {eLegado && (
-                                  <Text style={styles.legadoBadge}>legado</Text>
-                                )}
-                              </View>
-                              {modoRevisao && (
-                                <Text style={styles.editHint}>toque para editar</Text>
-                              )}
-                            </View>
-                            <Pressable
-                              style={styles.quantityBox}
-                              onPress={() => { if (modoRevisao) setQtdEdit({ item, qtd: item.quantidade }); }}
-                            >
-                              <Text style={styles.quantityValue}>{item.quantidade}</Text>
-                              <Text style={styles.quantityLabel}>{'QTD'}</Text>
-                            </Pressable>
-                          </Pressable>
-                          {modoRevisao && (
-                            <Pressable
-                              style={[styles.btnDiv, eDiv && styles.btnDivAtivo]}
-                              onPress={() => void alterarRevisao(item)}
-                            >
-                              <Text style={[styles.btnDivTexto, eDiv && styles.btnDivTextoAtivo]}>
-                                {eDiv ? '✗ Divergência' : '✗ Divergência'}
-                              </Text>
-                            </Pressable>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                );
-              })}
-
-              {/* Individuais */}
-              {itensOrganizados.individuais.map((item) => {
+              {leituras.map((item) => {
                 const cor = CORES_STATUS[item.status];
                 const eDiv = item.statusRevisao === 'divergencia';
                 const eLegado = item.statusRevisao === 'pendente';
@@ -954,11 +734,6 @@ export default function ResultadoScreen() {
                           <View style={[styles.badgeSmall, { backgroundColor: eDiv ? '#F04438' : cor.borda }]}>
                             <Text style={styles.badgeSmallText}>{cor.etiqueta}</Text>
                           </View>
-                          {item.produto.tipoProduto !== 'normal' && (
-                            <Text style={[styles.acParteBadge, styles.acParteBadgeTipo]}>
-                              {item.produto.tipoProduto === 'evaporadora' ? '❄ Eva' : '❄ Cond'}
-                            </Text>
-                          )}
                           {eLegado && (
                             <Text style={styles.legadoBadge}>legado</Text>
                           )}
@@ -1069,11 +844,7 @@ export default function ResultadoScreen() {
           onSalvarQuantidade={salvarQuantidade}
           onRemover={removerItem}
           onSalvarProdutoNovo={salvarComoProdutoNovo}
-          onAtualizarTipo={atualizarTipo}
           onSalvarDadosProduto={salvarDadosProduto}
-          itensConferencia={leituras}
-          onParear={handleParear}
-          onDesparear={handleDesparear}
         />
       )}
 
@@ -1304,48 +1075,6 @@ const styles = StyleSheet.create({
     marginTop: 4, fontSize: 9, fontWeight: '700',
     color: '#B54708', backgroundColor: '#FFFAEB',
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start',
-  },
-
-  acPartesRow: { marginTop: 6, flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-
-  acParteBadge: {
-    fontSize: 10, fontWeight: '700',
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
-  },
-
-  acParteBadgeTipo: { backgroundColor: '#EFF8FF', color: '#175CD3' },
-
-  parHeader: {
-    flexDirection: 'row', alignItems: 'center',
-    marginTop: 10, marginBottom: 4, paddingHorizontal: 4, gap: 6,
-  },
-
-  parHeaderText: { fontSize: 9, fontWeight: '800', color: '#175CD3', letterSpacing: 0.6 },
-
-  parHeaderCodigo: { fontSize: 9, fontWeight: '700', color: '#344054', flex: 1 },
-
-  parHeaderBadge: {
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: '#ECFDF3',
-  },
-
-  parHeaderBadgeText: { fontSize: 8, fontWeight: '800', color: '#027A48' },
-
-  parHeaderIncompleto: { fontSize: 9, fontWeight: '600', color: '#98A2B3', fontStyle: 'italic' },
-
-  productCardPar: { marginLeft: 8, borderLeftWidth: 3 },
-
-  acParteBadgeEva: {
-    backgroundColor: '#EFF8FF', color: '#175CD3',
-    fontSize: 10, fontWeight: '700',
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
-    alignSelf: 'flex-start', marginTop: 3,
-  },
-
-  acParteBadgeCond: {
-    backgroundColor: '#F4F3FF', color: '#5925DC',
-    fontSize: 10, fontWeight: '700',
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
-    alignSelf: 'flex-start', marginTop: 3,
   },
 
   // Botão único de divergência
